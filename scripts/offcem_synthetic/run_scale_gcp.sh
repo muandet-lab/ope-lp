@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # OffCEM-scale run of scale_experiment.py on the GCP VM (offcem-runner, n2-highmem-16). Sizes = the original repo's logged-data setting: 1000 actions, 3000 rounds, 200 users (dataset.py default n_users), 50 clusters. One process per clustering so the three run in parallel.
-# Usage (on the VM, inside tmux):   bash run_scale_gcp.sh [tag] [seed]        -> logs in ../../results_offcem_global/logs/, JSON scale_<tag>_seed<seed>.json
+# Usage (on the VM, inside tmux):   bash run_scale_gcp.sh [tag] [seed] [extra scale_experiment.py flags...]   e.g. bash run_scale_gcp.sh userfolds 7000 --folds user --noise-sd 3
+#   -> logs in ../../results_offcem_global/logs/, JSON scale_<tag>_seed<seed>.json
 # Resume after an interruption: re-run the same command; finished items are skipped.
 set -euo pipefail
-TAG=${1:-offcem_default}; SEED=${2:-7000}
+TAG=${1:-offcem_default}; SEED=${2:-7000}; shift $(( $# > 2 ? 2 : $# )); EXTRA=("$@")
 cd "$(dirname "$0")"
 mkdir -p ../../results_offcem_global/logs
 export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4
 for M in kmeans agglomerative spectral; do
-  nohup conda run -n offcem --no-capture-output python scale_experiment.py --K 1000 --n 3000 --users 200 --C 50 --seed "$SEED" --clusterings "$M" --tag "${TAG}_${M}" \
+  nohup conda run -n offcem --no-capture-output python scale_experiment.py --K 1000 --n 3000 --users 200 --C 50 --seed "$SEED" --clusterings "$M" --tag "${TAG}_${M}" "${EXTRA[@]}" \
     > "../../results_offcem_global/logs/scale_${TAG}_${M}_seed${SEED}.log" 2>&1 &
   echo "started $M (pid $!)"
 done
