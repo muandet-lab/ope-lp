@@ -1,0 +1,359 @@
+from dataclasses import dataclass
+import enum
+from typing import Callable
+from typing import Optional
+
+import numpy as np
+from clustering import compute_clusters
+from clustering import clusters_to_onehot_3d
+from obp.dataset import linear_behavior_policy
+from obp.dataset import linear_reward_function
+from obp.dataset import polynomial_reward_function
+from obp.dataset import SyntheticBanditDatasetWithActionEmbeds
+from obp.types import BanditFeedback
+from obp.utils import sample_action_fast
+from obp.utils import softmax
+from scipy.stats import rankdata
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.utils import check_random_state
+from sklearn.utils import check_scalar
+
+
+def sigmoid(x: np.ndarray) -> np.ndarray:
+    return 1.0 / (1 + np.exp(-x))
+
+
+class RewardType(enum.Enum):
+    BINARY = "binary"
+    CONTINUOUS = "continuous"
+
+    def __repr__(self) -> str:
+
+        return str(self)
+
+
+def cluster_effect_function(
+    context: np.ndarray,
+    cluster_context: np.ndarray,
+    random_state: int,
+) -> np.ndarray:
+    g_x_e = polynomial_reward_function(
+        context=context,
+        action_context=cluster_context,
+        random_state=random_state,
+    )
+    random_ = check_random_state(random_state)
+    (a, b, c, d) = random_.uniform(-3, 3, size=4)
+    x_a = 1 / context[:, :3].mean(axis=1)
+    x_b = 1 / context[:, 2:8].mean(axis=1)
+    x_c = context[:, 1:3].mean(axis=1)
+    x_d = context[:, 5:].mean(axis=1)
+    g_x_e += a * (x_a[:, np.newaxis] < 1.5)
+    g_x_e += b * (x_b[:, np.newaxis] < -0.5)
+    g_x_e += c * (x_c[:, np.newaxis] > 3.0)
+    g_x_e += d * (x_d[:, np.newaxis] < 1.0)
+
+    return g_x_e
+
+
+@dataclass
+class SyntheticBanditDataset(SyntheticBanditDatasetWithActionEmbeds):
+    def generate_fixed_world(
+        self,
+        n_users: int = 200,
+        n_clusters: int = 30,
+        clustering_method: str = "original",
+        cluster_balance: str = "natural",
+        cluster_temperature: float = 10.0,
+        world_seed: int = None,
+    ) -> BanditFeedback:
+        """Generate the population objects independently of logged rounds.
+
+        This is the fixed part of a synthetic bandit problem.  In particular,
+        changing a later logged-stream length cannot change contexts, action
+        features, clusters, rewards, or the population behavior policy.
+        """
+        seed = self.random_state if world_seed is None else int(world_seed)
+        random_ = check_random_state(seed)
+        fixed_user_contexts = random_.normal(size=(n_users, self.dim_context))
+
+        p_e_a = softmax(
+            random_.normal(
+                scale=4, size=(self.n_actions, self.n_cat_per_dim, self.n_cat_dim)
+            )
+        )
+        action_embed = np.zeros((self.n_actions, self.n_cat_dim), dtype=int)
+        for d in np.arange(self.n_cat_dim):
+            action_embed[:, d] = sample_action_fast(p_e_a[:, :, d], random_state=d)
+        action_context = action_embed[:, self.n_unobserved_cat_dim :]
+        action_context_one_hot = OneHotEncoder(
+            drop="first", sparse=False
+        ).fit_transform(action_context)
+
+        cluster_indices = compute_clusters(
+            action_features=action_context_one_hot,
+            n_clusters=n_clusters,
+            method=clustering_method,
+            balance=cluster_balance,
+            random_state=seed,
+            temperature=cluster_temperature,
+        )
+        actual_n_clusters = int(np.unique(cluster_indices).shape[0])
+        fixed_expected_rewards = np.zeros((n_users, self.n_actions))
+        g_x_e = cluster_effect_function(
+            context=fixed_user_contexts,
+            cluster_context=np.eye(actual_n_clusters),
+            random_state=seed,
+        )
+        for c in np.arange(actual_n_clusters):
+            fixed_expected_rewards[:, cluster_indices == c] = linear_reward_function(
+                context=fixed_user_contexts,
+                action_context=action_context_one_hot[cluster_indices == c],
+                random_state=seed + c,
+            )
+            fixed_expected_rewards[:, cluster_indices == c] += g_x_e[:, c][:, np.newaxis]
+
+        if self.behavior_policy_function is not None:
+            pi_b_logits = self.behavior_policy_function(
+                context=fixed_user_contexts,
+                action_context=action_context,
+                random_state=seed,
+            )
+        elif RewardType(self.reward_type) == RewardType.BINARY:
+            pi_b_logits = sigmoid(fixed_expected_rewards)
+        else:
+            pi_b_logits = fixed_expected_rewards
+        if self.n_deficient_actions > 0:
+            raise ValueError(
+                "generate_fixed_world does not support round-specific deficient actions"
+            )
+        pi_b_population = softmax(self.beta * pi_b_logits)
+
+        return dict(
+            world_seed=seed,
+            n_users=n_users,
+            n_actions=self.n_actions,
+            clusters=clusters_to_onehot_3d(cluster_indices, n_users),
+            cluster_indices=cluster_indices,
+            action_context=action_context,
+            action_context_one_hot=action_context_one_hot,
+            fixed_user_contexts=fixed_user_contexts,
+            fixed_expected_rewards=fixed_expected_rewards,
+            g_x_e=g_x_e,
+            p_e_a=p_e_a[:, :, self.n_unobserved_cat_dim :],
+            pi_b_population=pi_b_population[:, :, np.newaxis],
+        )
+
+    def sample_logged_stream(
+        self,
+        world: BanditFeedback,
+        n_rounds: int,
+        stream_seed: int,
+        materialize_round_policy: bool = True,
+        action_sample_chunk_size: Optional[int] = None,
+        progress_callback: Optional[Callable[[int], None]] = None,
+    ) -> BanditFeedback:
+        """Sample a logged stream from a fixed synthetic world."""
+        check_scalar(n_rounds, "n_rounds", int, min_val=1)
+        seed_sequence = np.random.SeedSequence(int(stream_seed))
+        user_seed, action_seed, reward_seed = [
+            int(child.generate_state(1)[0])
+            for child in seed_sequence.spawn(3)
+        ]
+        user_rng = check_random_state(user_seed)
+        reward_rng = check_random_state(reward_seed)
+        user_idx = user_rng.choice(int(world["n_users"]), size=n_rounds)
+        context = world["fixed_user_contexts"][user_idx]
+        pi_b_population = world["pi_b_population"][:, :, 0]
+        if action_sample_chunk_size is None:
+            action = sample_action_fast(
+                pi_b_population[user_idx], random_state=action_seed
+            )
+            if progress_callback is not None:
+                progress_callback(n_rounds)
+        else:
+            action = np.empty(n_rounds, dtype=int)
+            action_rng = check_random_state(action_seed)
+            for start in range(0, n_rounds, action_sample_chunk_size):
+                stop = min(start + action_sample_chunk_size, n_rounds)
+                probabilities = pi_b_population[user_idx[start:stop]]
+                uniform_rvs = action_rng.uniform(size=stop - start)[:, np.newaxis]
+                action[start:stop] = (probabilities.cumsum(axis=1) > uniform_rvs).argmax(axis=1)
+                if progress_callback is not None:
+                    progress_callback(stop - start)
+        expected_rewards_factual = world["fixed_expected_rewards"][user_idx, action]
+        if RewardType(self.reward_type) == RewardType.BINARY:
+            reward = reward_rng.binomial(n=1, p=sigmoid(expected_rewards_factual))
+        else:
+            reward = reward_rng.normal(
+                loc=expected_rewards_factual,
+                scale=self.reward_std,
+                size=n_rounds,
+            )
+
+        reward_sum_mat = np.zeros(
+            (int(world["n_users"]), int(world["n_actions"])), dtype=float
+        )
+        obs_count_mat = np.zeros_like(reward_sum_mat, dtype=int)
+        np.add.at(reward_sum_mat, (user_idx, action), reward)
+        np.add.at(obs_count_mat, (user_idx, action), 1)
+        reward_mat = np.zeros_like(reward_sum_mat)
+        observed = obs_count_mat > 0
+        reward_mat[observed] = reward_sum_mat[observed] / obs_count_mat[observed]
+
+        stream = dict(world)
+        stream.update(
+            n_rounds=n_rounds,
+            stream_seed=int(stream_seed),
+            user_idx=user_idx,
+            context=context,
+            action=action,
+            reward=reward,
+            reward_mat=reward_mat,
+            reward_sum_mat=reward_sum_mat,
+            obs_count_mat=obs_count_mat,
+            obs_mat=observed.astype(int),
+            expected_reward=(
+                world["fixed_expected_rewards"][user_idx]
+                if materialize_round_policy
+                else None
+            ),
+            position=None,
+            action_embed=world["action_context"][action],
+            pi_b=(
+                world["pi_b_population"][user_idx]
+                if materialize_round_policy
+                else None
+            ),
+            pscore=pi_b_population[user_idx, action],
+        )
+        return stream
+
+    def obtain_batch_bandit_feedback(
+        self,
+        n_rounds: int,
+        n_users: int = 200,
+        n_clusters: int = 30,
+        clustering_method: str = "original",
+        cluster_balance: str = "natural",
+        cluster_temperature: float = 10.0,
+    ) -> BanditFeedback:
+        check_scalar(n_rounds, "n_rounds", int, min_val=1)
+        fixed_user_contexts = self.random_.normal(size=(n_users, self.dim_context))
+        user_idx = self.random_.choice(n_users, size=n_rounds)
+
+        # define (near-deterministic) action embeddings
+        self.p_e_a = softmax(
+            self.random_.normal(
+                scale=4, size=(self.n_actions, self.n_cat_per_dim, self.n_cat_dim)
+            ),
+        )
+        action_embed = np.zeros((self.n_actions, self.n_cat_dim), dtype=int)
+        for d in np.arange(self.n_cat_dim):
+            action_embed[:, d] = sample_action_fast(
+                self.p_e_a[:, :, d],
+                random_state=d,
+            )
+        action_context = action_embed[:, self.n_unobserved_cat_dim :]
+        action_context_one_hot = OneHotEncoder(
+            drop="first", sparse=False
+        ).fit_transform(action_context)
+
+        # generate action clusters
+        clusters = compute_clusters(
+            action_features=action_context_one_hot,
+            n_clusters=n_clusters,
+            method=clustering_method,
+            balance=cluster_balance,
+            random_state=self.random_state,
+            temperature=cluster_temperature,
+        )
+        n_clusters = np.unique(clusters).shape[0]
+
+        # calc expected rewards given context and action (n_data, n_actions)
+        fixed_q_x_a = np.zeros((n_users, self.n_actions))
+        g_x_e = cluster_effect_function(
+            context=fixed_user_contexts,
+            cluster_context=np.eye(n_clusters),
+            random_state=self.random_state,
+        )
+        for c in np.arange(n_clusters):
+            fixed_q_x_a[:, clusters == c] = linear_reward_function(
+                context=fixed_user_contexts,
+                action_context=action_context_one_hot[clusters == c],
+                random_state=self.random_state + c,
+            )
+            fixed_q_x_a[:, clusters == c] += g_x_e[:, c][:, np.newaxis]
+
+        contexts = fixed_user_contexts[user_idx]
+        q_x_a = fixed_q_x_a[user_idx]
+
+        # sample actions for each round based on the behavior policy
+        if self.behavior_policy_function is None:
+            if RewardType(self.reward_type) == RewardType.BINARY:
+                pi_b_logits = sigmoid(q_x_a)
+            else:
+                pi_b_logits = q_x_a
+        else:
+            pi_b_logits = self.behavior_policy_function(
+                context=contexts,
+                action_context=self.action_context,
+                random_state=self.random_state,
+            )
+        if self.n_deficient_actions > 0:
+            pi_b = np.zeros_like(q_x_a)
+            n_supported_actions = self.n_actions - self.n_deficient_actions
+            supported_actions = np.argsort(
+                self.random_.gumbel(size=(n_rounds, self.n_actions)), axis=1
+            )[:, ::-1][:, :n_supported_actions]
+            supported_actions_idx = (
+                np.tile(np.arange(n_rounds), (n_supported_actions, 1)).T,
+                supported_actions,
+            )
+            pi_b[supported_actions_idx] = softmax(
+                self.beta * pi_b_logits[supported_actions_idx]
+            )
+        else:
+            pi_b = softmax(self.beta * pi_b_logits)
+        actions = sample_action_fast(pi_b, random_state=self.random_state)
+
+        # sample rewards given the context and action embeddings
+        if RewardType(self.reward_type) == RewardType.BINARY:
+            q_x_a = sigmoid(q_x_a)
+            expected_rewards_factual = q_x_a[np.arange(actions.shape[0]), actions]
+            rewards = self.random_.binomial(n=1, p=expected_rewards_factual)
+        elif RewardType(self.reward_type) == RewardType.CONTINUOUS:
+            expected_rewards_factual = q_x_a[np.arange(actions.shape[0]), actions]
+            rewards = self.random_.normal(
+                loc=expected_rewards_factual, scale=self.reward_std, size=n_rounds
+            )
+        reward_mat = np.zeros((n_users, self.n_actions))
+        for u, a, r in zip(user_idx, actions, rewards):
+            reward_mat[u, a] = r
+
+        clusters_ = clusters_to_onehot_3d(clusters, n_users)
+
+        return dict(
+            n_rounds=n_rounds,
+            n_users=n_users,
+            n_actions=self.n_actions,
+            clusters=clusters_,
+            cluster_indices=clusters,
+            action_context=action_context,
+            action_context_one_hot=action_context_one_hot,
+            user_idx=user_idx,
+            fixed_user_contexts=fixed_user_contexts,
+            fixed_expected_rewards=fixed_q_x_a,
+            context=contexts,
+            action=actions,
+            position=None,
+            reward=rewards,
+            reward_mat=reward_mat,
+            obs_mat=(reward_mat != 0).astype(int),
+            expected_reward=q_x_a,
+            g_x_e=g_x_e,
+            p_e_a=self.p_e_a[:, :, self.n_unobserved_cat_dim :],
+            action_embed=action_context[actions],
+            pi_b=pi_b[:, :, np.newaxis],
+            pscore=pi_b[np.arange(n_rounds), actions],
+        )

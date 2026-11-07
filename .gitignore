@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+results_offcem_global/logs/
+results_offcem_global/scale_*.json
+slides_figs/scale/
+*.log
+.DS_Store
