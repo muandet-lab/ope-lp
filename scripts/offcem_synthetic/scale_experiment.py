@@ -132,7 +132,7 @@ def run(args):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seed", type=int, default=7000)
-    ap.add_argument("--K", type=int, default=1000); ap.add_argument("--n", type=int, default=3000); ap.add_argument("--users", type=int, default=1000); ap.add_argument("--C", type=int, default=50)
+    ap.add_argument("--K", type=int, default=1000); ap.add_argument("--n", type=int, default=3000); ap.add_argument("--users", type=int, default=200); ap.add_argument("--C", type=int, default=50)
     ap.add_argument("--def-frac", type=float, default=0.5); ap.add_argument("--sigma", type=float, default=3.0, help="DGP reward noise sd")
     ap.add_argument("--noise-sd", type=float, default=None, help="take the noise sd as KNOWN for calibration and reference boxes (when repeated logged pairs are too sparse to estimate it)")
     ap.add_argument("--clusterings", nargs="+", default=["kmeans", "agglomerative", "spectral"], choices=("kmeans", "agglomerative", "hierarchical", "spectral", "dgp"))

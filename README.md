@@ -30,7 +30,7 @@ cd scripts/offcem_synthetic
 conda run -n offcem python scale_experiment.py --K 200 --n 1000 --users 100 --C 10 --clusterings kmeans agglomerative --tag smoke
 conda run -n offcem python plot_scale.py --tag smoke
 ```
-OffCEM default scale (1000 actions, 3000 rounds, 1000 users, 50 clusters), three clusterings in parallel, inside tmux on the VM:
+OffCEM default scale (1000 actions, 3000 logged rounds, 200 users as in the original repo, 50 clusters), three clusterings in parallel, inside tmux on the VM:
 ```
 cd scripts/offcem_synthetic && bash run_scale_gcp.sh offcem_default 7000
 ```
