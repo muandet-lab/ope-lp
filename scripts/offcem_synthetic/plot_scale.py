@@ -42,7 +42,7 @@ def sweep_plot(d, method, stem):
     for k, (g, c) in enumerate(zip(grid, cols)):
         for dx, sp, mk, fill, ls in STY:
             x = r["sweep"][sp][k]
-            if not x["ok"]:
+            if not x["ok"] or x["lo"] is None:
                 continue
             ax.plot([k + dx] * 2, [x["lo"], x["hi"]], color=c, lw=3, ls=ls); ax.plot([k + dx] * 2, [x["lo"], x["hi"]], ls="", marker=mk, ms=9, mfc=c if fill else "white", mec=c, mew=2)
             vals += [x["lo"], x["hi"]]
@@ -54,7 +54,7 @@ def sweep_plot(d, method, stem):
                  f"{w['K']} actions, {w['n']} rounds, {w['n_users']} users, {w['dgp_clusters']} DGP clusters, seed {w['seed']}", fontsize=12)
     ax.legend(handles=legend_handles(r), loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False, fontsize=10.5)
     cal = r["calibration"]
-    note = (f"One world. ε_max = Z·τ̂ with Z = 2, τ̂ = {cal['tau']:.2f} from {cal['n_pairs']} within-(user, cluster) logged contrasts, noise σ̂ = {cal['sigma_noise']:.2f} ({cal['n_repeat_dof']} repeat dof); logged data only. "
+    note = (f"One world. ε_max = Z·τ̂ with Z = 2, τ̂ = {cal['tau']:.2f} from {cal['n_pairs']} within-(user, cluster) logged contrasts, noise σ̂ = {cal['sigma_noise']:.2f} ({'taken as known' if cal.get('sigma_source') == 'given' else str(cal['n_repeat_dof']) + ' repeat dof'}). "
             f"Bars = supported estimate + closed-form LP interval, widened by 1.96 SE; m̂ cross-fitted by {w.get('folds', 'round')}, η = ρ, ridge centre, no recentring, range [-30, 30]; unsupported mass {r['lp_mass']:.2f}. "
             f"Dashed lines = supported part V⁺ only. Displayed ε = stored ε_LC / 2. Wall clock for this clustering: {r.get('elapsed_seconds', 0) / 60:.1f} min.")
     fig.text(0.02, 0.008, "\n".join(textwrap.fill(p, 110) for p in note.split("\n")), fontsize=8.5, color="#555", va="bottom")

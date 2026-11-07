@@ -63,7 +63,17 @@ def run(args):
         r["ari_vs_dgp"] = float(adjusted_rand_score(W["cl"], lab)); r["n_clusters"] = int(lab.max()) + 1
         P = B.prep(args.seed, user_folds=(args.folds == "user"), W=W, lab=lab)
         Wp, M = P["W"], P["M"]
-        emax = P["cal"]["eps_max"]
+        cal = P["cal"]
+        if args.noise_sd is not None:                     # repeats too sparse for a data-only sigma: take the noise sd as known (an assumption; recorded in the JSON)
+            cal["sigma_noise_estimated"] = cal["sigma_noise"]; cal["sigma_noise"] = float(args.noise_sd); cal["sigma_source"] = "given"
+            cal["tau2_raw"] = cal["mean_half_sq_contrast"] - args.noise_sd ** 2; cal["tau"] = float(np.sqrt(max(cal["tau2_raw"], 0.0))); cal["eps_max"] = cal["z"] * cal["tau"]
+            P["sigma"] = float(args.noise_sd)
+        else:
+            cal["sigma_source"] = "repeats"
+        emax = cal["eps_max"]
+        if not np.isfinite(emax):
+            raise SystemExit(f"[{method}] eps_max is NaN: the noise sd could not be estimated ({cal['n_repeat_dof']} repeat dof from repeated (user, action) logged pairs, need >= 10). "
+                             "Use fewer users or more rounds (the small world had 10 rounds per user), or pass --noise-sd <value> to take the noise sd as known.")
         grid = [float(x) for x in (np.linspace(1.0, emax, args.npts) if emax > 1.0 else [emax])]
         r.update(calibration=P["cal"], eta_hat=P["eta"], grid=grid, eps_max=emax, V=P["V"], V_plus_true=P["Vp_true"], V0_true=P["V0_true"], lp_mass=P["lp_mass"], supported=P["sup"],
                  n_merged_vars=int(P["nV"]), n_pairs=int(P["n_pairs"]), sigma_hat=P["sigma"], prep_seconds=time.perf_counter() - tc)
@@ -73,10 +83,10 @@ def run(args):
             ts = time.perf_counter(); sw = {}
             for sp in B.SUPS:
                 res = G.evaluate(Wp, M, {**F.SPLIT_SPEC, "overlap_lambda": None, "supported": sp, "eps_lc": [2 * g for g in grid]})
-                sw[sp] = [dict(eps=g, ok=x["status"] == "optimal", lo=x["with_se"][0], hi=x["with_se"][1], lp_lo=x["unsupported_interval"][0], lp_hi=x["unsupported_interval"][1],
-                               covers_V=bool(x["contains_V_with_se"])) for g, x in zip(grid, res["results"])]
+                sw[sp] = [dict(eps=g, ok=x["status"] == "optimal", status=x["status"], lo=x.get("with_se", [None, None])[0], hi=x.get("with_se", [None, None])[1],
+                               lp_lo=x.get("unsupported_interval", [None, None])[0], lp_hi=x.get("unsupported_interval", [None, None])[1], covers_V=x.get("contains_V_with_se")) for g, x in zip(grid, res["results"])]
             r["sweep"] = sw; r["sweep_seconds"] = time.perf_counter() - ts; dump(d, out)
-            print(f"[{method}] sweep {r['sweep_seconds']:.0f}s  DR at eps_max [{sw['dr'][-1]['lo']:.2f}, {sw['dr'][-1]['hi']:.2f}]", flush=True)
+            print(f"[{method}] sweep {r['sweep_seconds']:.0f}s  DR at eps_max " + (f"[{sw['dr'][-1]['lo']:.2f}, {sw['dr'][-1]['hi']:.2f}]" if sw["dr"][-1]["ok"] else sw["dr"][-1]["status"]), flush=True)
         # ---- beliefs at eps_max and one level below
         rhos = grid[-2:] if len(grid) > 1 else grid
         qv = P["qu"][P["v_user"], P["v_act"]]
@@ -123,7 +133,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seed", type=int, default=7000)
     ap.add_argument("--K", type=int, default=1000); ap.add_argument("--n", type=int, default=3000); ap.add_argument("--users", type=int, default=1000); ap.add_argument("--C", type=int, default=50)
-    ap.add_argument("--def-frac", type=float, default=0.5); ap.add_argument("--sigma", type=float, default=3.0)
+    ap.add_argument("--def-frac", type=float, default=0.5); ap.add_argument("--sigma", type=float, default=3.0, help="DGP reward noise sd")
+    ap.add_argument("--noise-sd", type=float, default=None, help="take the noise sd as KNOWN for calibration and reference boxes (when repeated logged pairs are too sparse to estimate it)")
     ap.add_argument("--clusterings", nargs="+", default=["kmeans", "agglomerative", "spectral"], choices=("kmeans", "agglomerative", "hierarchical", "spectral", "dgp"))
     ap.add_argument("--npts", type=int, default=5, help="eps grid points in [1, eps_max] (plot 04 used 5)")
     ap.add_argument("--L", type=float, default=3.0); ap.add_argument("--z", type=float, default=3.5)
