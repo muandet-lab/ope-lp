@@ -37,7 +37,7 @@ class RealCfg:
 def make_real_world(cfg: RealCfg, data_dir):
     ds = RD.ExtremeBanditDataset(dataset_name=cfg.dataset, max_reward_noise=cfg.max_reward_noise, n_components=cfg.n_components, random_state=cfg.seed, data_dir=data_dir)
     bd = ds.obtain_batch_bandit_feedback(n_rounds=cfg.n, n_users=cfg.users, beta=cfg.beta)
-    Xu, q = bd["fixed_user_contexts"], bd["expected_reward"]                       # (users x 100), (users x K)
+    Xu, q = bd["fixed_user_contexts"][:cfg.users], bd["expected_reward"][:cfg.users]  # the paper's loader draws one training doc per round and uses the first n_users as the fixed pool
     pi0 = ds.compute_pi_b(Xu, q, beta=cfg.beta)                                     # per user; identical across the user's rounds
     rng = np.random.RandomState(cfg.seed + 11)
     cl = rng.choice(cfg.C, size=ds.n_actions)                                       # the paper's uniform random clusters (train_clustering)

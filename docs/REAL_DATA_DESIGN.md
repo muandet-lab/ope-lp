@@ -83,3 +83,7 @@ users), the paper's random clusters and K-means both run, B5/B7 feasible, plots 
 user-level worlds in the process (no effect on round-level worlds).
 Run on EUR-Lex (files under `ope-lp/data/eurlex/{train,test}.txt`):
     python scale_experiment.py --real eurlex --n 8000 --users 300 --C 100 --lam 10 --folds user --alpha cv --eps-min 0.02 --clusterings random kmeans agglomerative spectral --beliefs B5_range B5_q5 B7_ord B7_z3.5 B5_q5+B7_z3.5 --tag eurlex_lam10
+
+Data obtained 2026-11-08: `gdown --fuzzy "https://drive.google.com/file/d/0B3lPMIHmG6vGU0VTR1pCejFpWjg/view?usp=sharing&resourcekey=0-SurjZ4z_5Tr38jENzf2Iwg"` (EURLex-4K BoW link on the
+XC repository page), zip contains `Eurlex/eurlex_{train,test}.txt` → renamed `data/eurlex/{train,test}.txt`. Header: 15,539 train / 3,809 test docs, 5,000 features, 3,993 labels → 3,956 actions after the
+paper's rare-label filter. Logger at β = 30: π0 spans 3e-40 to 1.0; λ = 10 puts 0.7 % of pairs (≈ 0.90 of target mass, essentially each user's favourite) in the LP.
