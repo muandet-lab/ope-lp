@@ -78,7 +78,7 @@ def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level", lam=Non
     nV = len(vkeys); P.update(nV=nV, v_user=vkeys // K, v_act=vkeys % K, vid=vid)
     ckeys, cid = np.unique(iu * C + ic, return_inverse=True)
     Kc = len(ckeys); cu, cc = ckeys // C, ckeys % C
-    P.update(Kc=Kc, mp=M[iu, ia], coef_v=np.bincount(vid, coef, nV), gh=st["G"][cu, cc], n_pairs=len(iu), n_nonident=int((~keep).sum()))
+    P.update(Kc=Kc, mp=M[iu, ia], coef_v=np.bincount(vid, coef, nV), gh=st["G"][cu, cc], gh_se=st["S"][cu, cc], cell_rows=st["rows_per_cluster"][cc], n_pairs=len(iu), n_nonident=int((~keep).sum()))
     rr = np.arange(len(iu))
     P["A_base"] = coo_matrix((np.concatenate([np.ones(len(iu)), -np.ones(len(iu)), -np.ones(len(iu)), np.ones(len(iu))]),
                               (np.concatenate([rr, rr, rr + len(iu), rr + len(iu)]), np.concatenate([vid, nV + cid, vid, nV + cid]))), shape=(2 * len(iu), nV + Kc)).tocsr()

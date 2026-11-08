@@ -57,9 +57,10 @@ def structures(W, M, lam=None, alpha=1.0):
     pi_c = np.stack([pi[:, cl == c].sum(1) for c in range(C)], 1)
     pm_cell = np.stack([(pi[:, cl == c] * U[:, cl == c]).sum(1) for c in range(C)], 1)
     support_viol = (pi_c > 0) & (pi0_c <= 0)
-    Gh, _, agg_se = G.level_ridge(W["X_rows"], clr, resid, W["X_unit"], C, alpha, 1, agg_w=wu[:, None] * pm_cell * ~support_viol)
+    Gh, Sh, agg_se = G.level_ridge(W["X_rows"], clr, resid, W["X_unit"], C, alpha, 1, agg_w=wu[:, None] * pm_cell * ~support_viol)
     ident = ~support_viol & ~np.isnan(Gh)
-    return dict(U=U, G=Gh, ident=ident, wu=wu, pi=pi, agg_se=agg_se, nU=nU)
+    rows_c = np.bincount(clr, minlength=C)                                           # logged rows behind each cluster's level ridge
+    return dict(U=U, G=Gh, S=Sh, ident=ident, wu=wu, pi=pi, agg_se=agg_se, nU=nU, rows_per_cluster=rows_c)
 
 
 def solve(st, M, W, rho, eta_fix, beliefs, l=-30.0, u=30.0):

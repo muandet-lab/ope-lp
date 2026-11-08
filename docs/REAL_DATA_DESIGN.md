@@ -87,3 +87,17 @@ Run on EUR-Lex (files under `ope-lp/data/eurlex/{train,test}.txt`):
 Data obtained 2026-11-08: `gdown --fuzzy "https://drive.google.com/file/d/0B3lPMIHmG6vGU0VTR1pCejFpWjg/view?usp=sharing&resourcekey=0-SurjZ4z_5Tr38jENzf2Iwg"` (EURLex-4K BoW link on the
 XC repository page), zip contains `Eurlex/eurlex_{train,test}.txt` → renamed `data/eurlex/{train,test}.txt`. Header: 15,539 train / 3,809 test docs, 5,000 features, 3,993 labels → 3,956 actions after the
 paper's rare-label filter. Logger at β = 30: π0 spans 3e-40 to 1.0; λ = 10 puts 0.7 % of pairs (≈ 0.90 of target mass, essentially each user's favourite) in the LP.
+
+## 7. First contact with EUR-Lex (2026-11-08, late): the paper's logger carries almost no information about the target's favourites
+Setup as planned (8,000 rounds, 300 users, 100 random clusters, λ = 10, user folds, α = 1000 by CV). Findings from the truth checks (truth used only after the fact):
+- The logging policy (softmax at β = 30 over the paper's ridge r̂) shows a TRUE positive label in **0.2 %** of logged rounds; the logged reward mean is 0.296, i.e. the negative-label rate.
+- Each user's favourite action has true q ≈ 0.72; every cluster-level centre predicts ≈ 0.29 for it. The deviation is 0.43 (p5–p95: 0.35–0.51) for **99 % of the LP mass**.
+- ε_max from the logged contrasts is 0.10 (the contrasts are noise-dominated: D = 0.206 vs plug-in noise 0.203). The LC belief is therefore violated on 99 % of the LP mass and the true mean vector is
+  infeasible for the LP at any z in the per-cell level band.
+- The per-cell level ridge (100 PCA dims, ~80 rows per cluster) is itself unidentified: level SE median 0.58, max 1.12 on a [0, 1] outcome; centre m̂ + ĝ ranges −0.28 to 1.49. With η = ρ the baseline
+  LP is infeasible below ρ ≈ 0.3. New option `--eta-se-z Z` sets η_cell = max(ρ, Z · SE_cell) (logged data only); with Z = 1–2 the LP is feasible but its upper bound (0.43–0.50) stays below the
+  true V⁰ = 0.646.
+Reading: under the paper's real-data protocol the logs contain essentially no observations of the labels the target policy favours, so no method that learns from logged rewards can place
+them; the paper's own OffCEM point estimate must sit near 0.3 against V ≈ 0.68 (consistent with its reported normalised MSE of 0.2–0.3 on Figure 4). The LP makes this visible as a calibrated ε
+far below the deviation that the truth requires, but from the logs alone the violation is invisible (favourites are never logged). A logger with a lower β (more exploration of positives)
+is the variable that would let the logs carry the information; that is a departure from the paper's β = 30.
