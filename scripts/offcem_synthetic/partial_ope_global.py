@@ -211,11 +211,55 @@ def fit_cluster_level_units(W, kind="ridge", folds=5, seed=12345, alpha=1.0, deg
     return Mc
 
 
+def fit_two_step_units(W, folds=5, seed=12345, user_folds=False, epochs=30):
+    """OffCEM's two-step reward model f_hat(x, a) = g_hat(x, c_a) + h_hat(x, a) (Saito et al. 2023, Sec. 3.2), as implemented in the paper's code (ope.train_pairwise_model +
+    OBP RegressionModel MLP(50,50,50) on the residual with the cluster as the action), cross-fitted by unit (or by user). Pairwise data: observed action pairs of the same user in the
+    same (estimation) cluster; reward per (user, action) = mean logged y. Returns f_hat as (units x K)."""
+    import torch
+    import ope as OPE
+    from obp.ope import RegressionModel
+    from sklearn.neural_network import MLPRegressor as MLP
+    uid, act, y, nU, C, cl, K = W["uid"], W["act"], W["y"], len(W["X_unit"]), W["C"], np.asarray(W["cl"]), W["K"]
+    user_r = np.asarray(W["user_of_round"]) if W["cfg"].exclusion == "round_random" else uid
+    users, inv_r = np.unique(user_r, return_inverse=True); nu = len(users)
+    first = np.array([np.flatnonzero(inv_r == k)[0] for k in range(nu)])
+    Xu = W["X_unit"][uid[first]] if W["cfg"].exclusion == "round_random" else W["X_unit"]      # one context per user
+    unit_user = inv_r[np.array([np.flatnonzero(uid == u)[0] for u in range(nU)])] if W["cfg"].exclusion == "round_random" else np.arange(nU)
+    if user_folds:
+        foldu = (np.random.RandomState(seed).permutation(nu) % folds)[unit_user]
+    else:
+        foldu = np.random.RandomState(seed).permutation(nU) % folds
+    fold_rows = foldu[uid]
+    cluster_idx_mat = np.tile(cl, (nu, 1))
+    M = np.zeros((nU, K))
+    for f in range(folds):
+        tr, te = np.flatnonzero(fold_rows != f), np.flatnonzero(foldu == f)
+        if not len(te):
+            continue
+        obs, s_, n_ = np.zeros((nu, K), int), np.zeros((nu, K)), np.zeros((nu, K))
+        np.add.at(s_, (inv_r[tr], act[tr]), y[tr]); np.add.at(n_, (inv_r[tr], act[tr]), 1); obs[n_ > 0] = 1
+        with np.errstate(invalid="ignore", divide="ignore"):
+            reward_mat = np.where(n_ > 0, s_ / n_, 0.0)
+        bd = dict(n_users=nu, fixed_user_contexts=Xu, n_actions=K, action_context_one_hot=np.asarray(W["action_x"], float), obs_mat=obs, reward_mat=reward_mat,
+                  context=Xu[inv_r[tr]], user_idx=inv_r[tr], action=act[tr], reward=y[tr].astype(float))
+        torch.manual_seed(seed + f)
+        h_hat = OPE.train_pairwise_model(bd, cluster_idx_mat, C, prediction_context=Xu, num_epochs=epochs, random_state=seed + f)   # (nu x K)
+        resid = y[tr] - h_hat[inv_r[tr], act[tr]]
+        reg = RegressionModel(n_actions=C, action_context=np.eye(C), base_model=MLP(hidden_layer_sizes=(50, 50, 50), random_state=seed + f))
+        reg.fit(context=Xu[inv_r[tr]], action=cl[act[tr]], reward=resid)
+        g_hat = reg.predict(context=Xu)[:, :, 0]                                                                                        # (nu x C)
+        f_hat = h_hat + g_hat[:, cl]
+        M[te] = f_hat[unit_user[te]]
+    return M
+
+
 def get_model(W, name, cluster_model="ridge", folds=5, alpha=1.0, degree=1, model_noise=2.0, user_folds=False):
     q, cl, C, seed = W["q_unit"], W["cl"], W["C"], W["cfg"].seed
     rng = np.random.RandomState(seed + 1)
     if name == "cluster_level":
         return fit_cluster_level_units(W, cluster_model, folds, seed, alpha, degree, user_folds)[:, cl]
+    if name == "two_step":
+        return fit_two_step_units(W, folds, seed, user_folds)
     if name == "oracle":
         return q.copy()
     if name == "oracle_shift":

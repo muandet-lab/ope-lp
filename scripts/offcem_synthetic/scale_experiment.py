@@ -52,7 +52,7 @@ def run(args):
     cfg = dict(K=args.K, n=args.n, users=args.users, C=args.C, def_frac=args.def_frac, exclusion="round_random", sigma=args.sigma, beta=-0.1, eps_policy=0.2, clustering="original", seed=args.seed)
     t0 = time.perf_counter()
     W = G.make_world(G.WorldCfg(**cfg))
-    d["world"] = dict(cfg, folds=args.folds, build_seconds=time.perf_counter() - t0, n_rounds=int(W["n"]), n_users=int(len(np.unique(W["user_of_round"]))), dgp_clusters=int(W["C"]))
+    d["world"] = dict(cfg, folds=args.folds, model=args.model, build_seconds=time.perf_counter() - t0, n_rounds=int(W["n"]), n_users=int(len(np.unique(W["user_of_round"]))), dgp_clusters=int(W["C"]))
     d.setdefault("clusterings", {})
     print(f"world built in {d['world']['build_seconds']:.1f}s: {args.K} actions, {args.n} rounds, {d['world']['n_users']} users, {W['C']} DGP clusters", flush=True)
     for method in args.clusterings:
@@ -61,7 +61,7 @@ def run(args):
         r.setdefault("runs", {})
         lab = labels(W, method, args.seed)
         r["ari_vs_dgp"] = float(adjusted_rand_score(W["cl"], lab)); r["n_clusters"] = int(lab.max()) + 1
-        P = B.prep(args.seed, user_folds=(args.folds == "user"), W=W, lab=lab)
+        P = B.prep(args.seed, user_folds=(args.folds == "user"), W=W, lab=lab, model=args.model)
         Wp, M = P["W"], P["M"]
         cal = P["cal"]
         if args.noise_sd is not None:                     # repeats too sparse for a data-only sigma: take the noise sd as known (an assumption; recorded in the JSON)
@@ -140,6 +140,7 @@ if __name__ == "__main__":
     ap.add_argument("--L", type=float, default=3.0); ap.add_argument("--z", type=float, default=3.5)
     ap.add_argument("--beliefs", nargs="*", default=None, help="subset of belief names to run (default all)")
     ap.add_argument("--time-limit", type=float, default=3600.0); ap.add_argument("--max-it", type=int, default=8)
+    ap.add_argument("--model", default="cluster_level", choices=("cluster_level", "two_step"), help="reward model m_hat: cluster-level ridge (plots 03-10) or OffCEM's two-step f_hat = g_hat(x,c) + h_hat(x,a) (paper code)")
     ap.add_argument("--folds", default="round", choices=("round", "user"), help="cross-fitting folds for m_hat: round (plot-04 setup; merged LP can be infeasible when fold models disagree) or user (merged LP = closed form)")
     ap.add_argument("--tag", default="offcem_default"); ap.add_argument("--redo", action="store_true")
     run(ap.parse_args())

@@ -55,7 +55,7 @@ def sweep_plot(d, method, stem):
     ax.legend(handles=legend_handles(r), loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False, fontsize=10.5)
     cal = r["calibration"]
     note = (f"One world. ε_max = Z·τ̂ with Z = 2, τ̂ = {cal['tau']:.2f} from {cal['n_pairs']} within-(user, cluster) logged contrasts, noise σ̂ = {cal['sigma_noise']:.2f} ({'taken as known' if cal.get('sigma_source') == 'given' else str(cal['n_repeat_dof']) + ' repeat dof'}). "
-            f"Bars = supported estimate + closed-form LP interval, widened by 1.96 SE; m̂ cross-fitted by {w.get('folds', 'round')}, η = ρ, ridge centre, no recentring, range [-30, 30]; unsupported mass {r['lp_mass']:.2f}. "
+            f"Bars = supported estimate + closed-form LP interval, widened by 1.96 SE; m̂ = {'OffCEM two-step f̂' if w.get('model') == 'two_step' else 'cluster-level ridge'} cross-fitted by {w.get('folds', 'round')}, η = ρ, ridge centre, no recentring, range [-30, 30]; unsupported mass {r['lp_mass']:.2f}. "
             f"Dashed lines = supported part V⁺ only. Displayed ε = stored ε_LC / 2. Wall clock for this clustering: {r.get('elapsed_seconds', 0) / 60:.1f} min.")
     fig.text(0.02, 0.008, "\n".join(textwrap.fill(p, 110) for p in note.split("\n")), fontsize=8.5, color="#555", va="bottom")
     fig.subplots_adjust(left=0.1, right=0.97, top=0.89, bottom=0.34)
@@ -91,7 +91,7 @@ def belief_axes(ax, r, rho, items, cols, allv):
 
 def belief_note(d, r):
     bi = r["beliefs_info"]; w = d["world"]
-    return (f"One world ({w['K']} actions, {w['n']} rounds, {w['n_users']} users, {w['dgp_clusters']} DGP clusters, seed {w['seed']}); original exclusions, λ = ∞, m̂ cross-fitted by {w.get('folds', 'round')}, η = ρ, no recentring. "
+    return (f"One world ({w['K']} actions, {w['n']} rounds, {w['n_users']} users, {w['dgp_clusters']} DGP clusters, seed {w['seed']}); original exclusions, λ = ∞, m̂ = {'OffCEM two-step f̂ (ĝ + ĥ)' if w.get('model') == 'two_step' else 'cluster-level ridge'} cross-fitted by {w.get('folds', 'round')}, η = ρ, no recentring. "
             "'w' = width of the DR bar. Bars = supported estimate + LP, widened by 1.96 SE; dashed lines = supported part V⁺ only. First x = closed form (plot-04 bar); second = same beliefs with μ merged per (user, action). "
             f"B3: |μ_ua − μ_va| ≤ {bi['L']:g}·d(x_u, x_v), logged reference boxes (mean ± z σ̂/√n, z = 1.96 or {bi['z']:g}) + coupling; median {bi['b3_refs_per_var_median']:.0f} references per variable, "
             f"{100 * bi['b3_share_vars_with_ref']:.0f}% of variables have one; true means outside the boxes: {100 * bi['b3_true_outside_mass']:.0f}% (z = 1.96) / {100 * bi['b3z_true_outside_mass']:.0f}% (z = {bi['z']:g}) of LP mass. "

@@ -46,13 +46,13 @@ LO, HI = -30.0, 30.0
 KNN = 3
 
 
-def prep(seed, user_folds=True, W=None, lab=None):
+def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level"):
     """W = None: the small world of plots 03-10 (SPLIT_WORLD, original exclusions) with K-means labels. Otherwise a prebuilt world and an action-label vector (any clustering)."""
     if W is None:
         W = G.make_world(G.WorldCfg(**{**F.SPLIT_WORLD, "seed": seed, "exclusion": "round_random"}))
     km = KMeans(n_clusters=W["C"], n_init=10, random_state=0).fit_predict(np.asarray(W["action_x"], float)).astype(int) if lab is None else np.asarray(lab).astype(int)
     Wp = {**W, "cl": km, "C": int(km.max()) + 1}
-    M = G.get_model(Wp, "cluster_level", "ridge", 5, 1.0, 1, user_folds=user_folds)
+    M = G.get_model(Wp, model, "ridge", 5, 1.0, 1, user_folds=user_folds)
     cal = S.calibrate_user_cells(Wp, M)
     et = E.eta_hat(Wp, M, cal)
     st = X.structures(Wp, M)
