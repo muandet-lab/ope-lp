@@ -27,3 +27,11 @@ All lambda = 10 plots were moved to `lam10/` (its own numbering, see `lam10/READ
 | 08_lamInf_kmeans_B3coupling_etaRho-vs-etaHat_eps5.85-7.47 | K-means, λ = ∞, seed 7000: η = ρ (green) vs η fixed at η̂ = 7.38 (grey), baseline and + B3 refs + coupling at L = 3, 3.5, 4.4; eps 5.85 and 7.47. Script `plot_b3_eta_rho.py`; data `b3_lipschitz_seed7000_eta_rho.json` (from `b3_lipschitz_experiment.py --eta rho --out ...`) | (new, 2026-11-07) |
 | 09_lamInf_kmeans_B3coupling_earlierSetup_byRoundFolds_etaRho_eps5.85-7.47 | B3 refs + coupling on the plot-04 setup (K-means, λ = ∞, by-round folds, η = ρ), eps 5.85 and 7.47; first bar reproduces plot 04. Script `plot_b3_round_folds.py`; data `b3_lipschitz_seed7000_eta_rho_roundfolds.json` (`b3_lipschitz_experiment.py --eta rho --folds round --out ...`) | (new, 2026-11-07) |
 | 10_lamInf_kmeans_B3-B5-B7_earlierSetup_byRoundFolds_etaRho_recentre_eps5.85-7.47 | Plot-04 setup (K-means, λ = ∞, by-round folds, η = ρ), eps 5.85 and 7.47, 2 × 2: rows = no recentring / levels recentred (importance-weighted residual, shift −0.42 on this world); x = plot-04 bar, merged baseline, + B3 (L = 3, coupled), + B5 group mean bounds (range / 5–95 %), + B7 favourite-action dominance (ordering only / + logged lower bounds z = 3.5), + all three. Viridis per belief set (plot-03 scheme). Script `plot_b5_b7.py`; data `b5_b7_seed7000_roundfolds.json` (`b5_b7_experiment.py`) | (new, 2026-11-07) |
+
+## scale/ (OffCEM-scale runs, 2026-11-08)
+| File | What it is |
+|---|---|
+| n8000_userfolds_seed7000_<clustering>_epsSweep | plot-04-style ε sweep, 1000 actions, 8000 rounds, 200 users, 50 clusters, by-user folds, η = ρ; one per clustering (kmeans, agglomerative, spectral) |
+| n8000_userfolds_seed7000_<clustering>_beliefs | plot-10-style belief panels at ε_max and one level below; one per clustering |
+| n8000_userfolds_seed7000_beliefs_all | the three belief panels stacked (rows = clusterings) |
+Scripts `plot_scale.py --tag n8000_userfolds`; data `results_offcem_global/scale_n8000_userfolds_*_seed7000.json`; see docs/OFFCEM_JOINT_LP_EXPERIMENTS.md §9.

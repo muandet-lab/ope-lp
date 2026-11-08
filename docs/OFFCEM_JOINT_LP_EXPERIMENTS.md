@@ -145,3 +145,39 @@ Findings:
    split (user-fixed) exclusions with by-user folds; under by-round folds and original exclusions on seed 7000 it goes the other way. Single-world evidence only.
 5. The infeasibilities are informative: they show that the LC window (±ρ around m̂ + b) is violated on exactly the favourite actions, which is where the target's mass sits and why the
    bars are centred low. B7 with logged evidence is a data-only way of pulling those cells up.
+
+## 9. OffCEM-scale run (2026-11-08): 1000 actions, 8000 rounds, 200 users, 50 clusters — K-means / agglomerative / spectral
+
+Run on the GCP VM `offcem-runner` with `scripts/offcem_synthetic/run_scale_gcp.sh n8000_userfolds 7000 --n 8000 --folds user` (repo `muandet-lab/ope-lp`).
+Data: `results_offcem_global/scale_n8000_userfolds_<clustering>_seed7000.json`; plots: `slides_figs/scale/n8000_userfolds_seed7000_*`.
+
+### Why these sizes and not the OffCEM default of 3000 rounds
+The original repo logs n_val = 3000 rounds over `dataset.py`'s default pool of 200 users (the 1000 users are only the separate ground-truth test pool). At 3000 rounds two
+things broke at once, both from the same ratio (rounds per (user, cluster) cell ≈ 0.3 against ≈ 1 in the small world):
+- **ε_max calibration starved.** Only 464 within-(user, cluster) contrasts and 22 repeat dof for σ̂; σ̂ = 3.74 (truth 3) and τ̂² = contrast − σ̂² collapsed to 0.28, ε_max = 1.06
+  while the true within-(user, K-means cluster) spread of q has median 7.5. The by-round-folds ε_max of 5.46 was right by accident: fold disagreement inflated the contrasts.
+- **Merged LP infeasible with by-round folds.** Each per-cluster ridge is fit on ~48 rounds in 10 dimensions and extrapolates; for one user two fold models predicted −10.1 and 8.9
+  in the same cluster. Four cells had a spread above 4ρ, the hard limit for one merged μ per (user, action). By-user folds make merged LP = closed form.
+8000 rounds (the top of OffCEM's own n_val sweep) gives 40 rounds per user, ≈ 3300 contrasts and 161 repeat dof; σ̂ = 3.19; ε_max 4.4–4.7 with no assumed noise level.
+
+### World (same for all three clusterings)
+V = 7.48, true V⁺ = 3.77, true V⁰ = 3.71, LP mass 0.50. Supported estimates: DR 1.02 / 1.06 / 1.45, IPS 0.96, OffCEM 0.93 / 0.57 / 0.99 (K-means / agglomerative / spectral).
+**Every supported estimator under-estimates V⁺ by 2.3–3.2.** All three clusterings have ARI ≈ 0 against the DGP's softmax-sampled clusters (expected, see AGENTS.md).
+
+### Results at ε_max (DR bars = DR + LP ± 1.96 SE)
+
+| clustering | ε_max | baseline | + B3 z=3.5 | + B5 | + B7 ord | + B7 + logged | all three | covers V? |
+|---|---|---|---|---|---|---|---|---|
+| K-means | 4.73 | [−3.41, 7.39] w 10.8 | w 10.8 | w 10.8 | [−2.05, 7.32] w 9.4 | [−0.83, 7.32] w 8.2 | [−0.79, 7.25] w 8.0 | no (top 7.25–7.39 < 7.48) |
+| agglomerative | 4.43 | [−2.85, 6.82] w 9.7 | w 9.6 | w 9.7 | [−1.27, 6.74] w 8.0 | [−0.37, 6.74] w 7.1 | [−0.34, 6.70] w 7.0 | no (top 6.7–6.8) |
+| spectral | 4.70 | [−3.04, 7.88] w 10.9 | w 10.9 | w 10.9 | [−1.47, 7.80] w 9.3 | [−0.44, 7.80] w 8.2 | [−0.41, 7.72] w 8.1 | yes (DR 1.45 is the least biased) |
+
+One level below ε_max (3.6–3.8) every bar misses V, and for agglomerative B7-with-logged is infeasible there (the logged lower bound on a user's favourite action exceeds the LC ceiling, i.e. the model under-predicts a* by more than ρ — the same signal as on the small world).
+The LP interval contains the true V⁰ = 3.71 in every feasible run.
+
+### Findings
+1. **B7 is again the only belief that moves the bars.** Ordering alone raises the DR floor by 1.4–1.6; adding the user's logged rewards as lower bounds on the favourite action raises it by 2.6–2.7. The ceiling does not move. Same picture for all three clusterings.
+2. **B3 does nothing at this scale and is expensive.** With z = 1.96 the intersected boxes are infeasible (median 8 references per variable; 8.9 % of true mass outside). With z = 3.5 it trims 0.02–0.04 for 31–37 minutes and ≈ 457,000 coupling cuts. With 1000 actions a user's logged rewards are spread over too many actions for same-action references to bind. Drop B3 from scale runs.
+3. **B5 does nothing** (≤ 0.04), as on the small world.
+4. **Coverage is lost at the top, and the LP is not the cause.** The LP part contains V⁰ with 1.8–2 units to spare; the bars miss V because the supported estimate is 2.3–3.2 below the true V⁺. Under λ = ∞ the target's favourite action (the top of 1000) is usually supported with a huge weight and the cluster model under-predicts it; OffCEM is no better than DR here. Beliefs on the unsupported part cannot repair that. Next step for coverage: the λ = 10 variant (weak-overlap pairs handed to the LP), not more beliefs.
+5. **Cost.** Baseline solve ≈ 13 min per bar (both directions) on the VM; a full clustering (20 items incl. three coupling runs) 4.1–5.2 h; three clusterings in parallel on 16 cores ≈ 5.3 h wall clock. Without B3: ≈ 2.5 h per clustering.
