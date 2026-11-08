@@ -135,6 +135,8 @@ def run(args):
             raise SystemExit(f"[{method}] eps_max is NaN: the noise sd could not be estimated ({cal['n_repeat_dof']} repeat dof from repeated (user, action) logged pairs, need >= 10). "
                              "Use fewer users or more rounds (the small world had 10 rounds per user), or pass --noise-sd <value> to take the noise sd as known.")
         grid = [float(x) for x in np.linspace(args.eps_min, emax, args.npts)] if emax > args.eps_min else [float(args.eps_min)]
+        if args.eps_grid:
+            grid = [float(x) for x in args.eps_grid]   # forced grid: ignores eps_max; beliefs run at every grid point
         r.update(calibration=P["cal"], eta_hat=P["eta"], level_se=dict(median=float(np.median(P["gh_se"])), p90=float(np.percentile(P["gh_se"], 90)), max=float(P["gh_se"].max())), rows_per_cluster=dict(min=int(P["st"]["rows_per_cluster"].min()), median=float(np.median(P["st"]["rows_per_cluster"]))), grid=grid, eps_max=emax, V=P["V"], V_plus_true=P["Vp_true"], V0_true=P["V0_true"], lp_mass=P["lp_mass"], supported=P["sup"],
                  n_merged_vars=int(P["nV"]), n_pairs=int(P["n_pairs"]), sigma_hat=P["sigma"], prep_seconds=time.perf_counter() - tc)
         print(f"[{method}] ARI {r['ari_vs_dgp']:.2f}  eps_max {emax:.2f}  grid {np.round(grid, 2).tolist()}  vars {P['nV']}  prep {r['prep_seconds']:.0f}s", flush=True)
@@ -148,7 +150,7 @@ def run(args):
             r["sweep"] = sw; r["sweep_seconds"] = time.perf_counter() - ts; dump(d, out)
             print(f"[{method}] sweep {r['sweep_seconds']:.0f}s  DR at eps_max " + (f"[{sw['dr'][-1]['lo']:.2f}, {sw['dr'][-1]['hi']:.2f}]" if sw["dr"][-1]["ok"] else sw["dr"][-1]["status"]), flush=True)
         # ---- beliefs at eps_max and one level below
-        rhos = grid[-2:] if len(grid) > 1 else grid
+        rhos = grid if args.eps_grid else (grid[-2:] if len(grid) > 1 else grid)
         qv = P["qu"][P["v_user"], P["v_act"]]
         mean, n = (P["ref_log"][0] + P["ref_log"][1]) / 2, P["ref_n"]
         with np.errstate(invalid="ignore", divide="ignore"):
@@ -215,6 +217,7 @@ if __name__ == "__main__":
     ap.add_argument("--alpha", default="1.0", help="ridge penalty for the cluster-level centre and the level ridge: a number (plots 03-10 used 1.0) or 'cv' = chosen by out-of-fold MSE on logged rounds")
     ap.add_argument("--eta-se-z", type=float, default=None, help="per-cell level band eta_cell = max(rho, z * SE of the cell's level ridge estimate); default: eta = rho for every cell")
     ap.add_argument("--eps-min", type=float, default=1.0, help="lowest displayed eps of the sweep grid (synthetic: 1.0; real [0,1] outcomes: e.g. 0.02)")
+    ap.add_argument("--eps-grid", type=float, nargs="+", default=None, help="force the displayed eps grid (e.g. 1 2 3); eps_max is still computed and recorded but not used; beliefs run at every grid point")
     ap.add_argument("--npts", type=int, default=5, help="eps grid points in [1, eps_max] (plot 04 used 5)")
     ap.add_argument("--L", default="3.0", help="Lipschitz constant for B3: a number, or 'auto' = estimated from logged data (estimate_L), frozen before any bound")
     ap.add_argument("--z", type=float, default=3.5, help="margin multiplier for B7 logged lower bounds (and the B3_z variant)")
