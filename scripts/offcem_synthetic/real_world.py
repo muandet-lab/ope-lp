@@ -28,6 +28,7 @@ class RealCfg:
     n_components: int = 100
     max_reward_noise: float = 0.2
     emb_dim: int = 50
+    logger: str = "paper"              # paper = softmax(beta * r_hat), r_hat the paper's ridge fitted on test labels; true_q = softmax(beta * q) on the true expected reward (as in the paper's SYNTHETIC generator)
     exclusion: str = "user_fixed"      # units = users; no per-round exclusions exist in the paper's real-data generator
     seed: int = 7000
     K: int = 0
@@ -38,7 +39,14 @@ def make_real_world(cfg: RealCfg, data_dir):
     ds = RD.ExtremeBanditDataset(dataset_name=cfg.dataset, max_reward_noise=cfg.max_reward_noise, n_components=cfg.n_components, random_state=cfg.seed, data_dir=data_dir)
     bd = ds.obtain_batch_bandit_feedback(n_rounds=cfg.n, n_users=cfg.users, beta=cfg.beta)
     Xu, q = bd["fixed_user_contexts"][:cfg.users], bd["expected_reward"][:cfg.users]  # the paper's loader draws one training doc per round and uses the first n_users as the fixed pool
-    pi0 = ds.compute_pi_b(Xu, q, beta=cfg.beta)                                     # per user; identical across the user's rounds
+    if cfg.logger == "paper":
+        pi0 = ds.compute_pi_b(Xu, q, beta=cfg.beta)                                 # per user; identical across the user's rounds
+    else:                                                                           # true_q logger: redraw actions and rewards under softmax(beta * q), everything else unchanged
+        from obp.utils import softmax, sample_action_fast
+        pi0 = softmax(cfg.beta * q)
+        rng = np.random.RandomState(cfg.seed + 7)
+        acts = sample_action_fast(pi0[bd["user_idx"]], random_state=cfg.seed + 7)
+        bd = {**bd, "action": acts, "reward": rng.binomial(n=1, p=q[bd["user_idx"], acts]), "pscore": pi0[bd["user_idx"], acts]}
     rng = np.random.RandomState(cfg.seed + 11)
     cl = rng.choice(cfg.C, size=ds.n_actions)                                       # the paper's uniform random clusters (train_clustering)
     _, cl = np.unique(cl, return_inverse=True)

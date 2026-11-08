@@ -86,7 +86,7 @@ def run(args):
     d = json.load(open(out)) if os.path.exists(out) else {}
     t0 = time.perf_counter()
     if args.real:
-        rc = RW.RealCfg(dataset=args.real, n=args.n, users=args.users, beta=args.beta, eps_policy=args.eps_target, lam=args.lam, C=args.C, seed=args.seed)
+        rc = RW.RealCfg(dataset=args.real, n=args.n, users=args.users, beta=args.beta, eps_policy=args.eps_target, lam=args.lam, C=args.C, seed=args.seed, logger=args.logger)
         W = RW.make_real_world(rc, args.data_dir); cfg = {k: v for k, v in rc.__dict__.items()}
         limits, lam, calibrate, sigma_ref = [0.0, 1.0], args.lam, RW.calibrate_binomial, 0.5      # Bernoulli: range [0,1]; reference intervals use the sd bound 0.5
     else:
@@ -129,11 +129,12 @@ def run(args):
             cal["sigma_source"] = "repeats"
         emax = cal["eps_max"]
         if np.isfinite(emax) and emax <= args.eps_min:
-            raise SystemExit(f"[{method}] eps_max = {emax:.3f} <= eps_min = {args.eps_min}: the sweep grid is empty. Stopping for review (protocol step 7).")
+            print(f"[{method}] eps_max = {emax:.4f} <= eps_min = {args.eps_min} (tau2_raw {cal['tau2_raw']:.4f}: contrasts at or below the noise level). Grid collapses to the single point eps_min.", flush=True)
+            r["eps_max_below_eps_min"] = True
         if not np.isfinite(emax):
             raise SystemExit(f"[{method}] eps_max is NaN: the noise sd could not be estimated ({cal['n_repeat_dof']} repeat dof from repeated (user, action) logged pairs, need >= 10). "
                              "Use fewer users or more rounds (the small world had 10 rounds per user), or pass --noise-sd <value> to take the noise sd as known.")
-        grid = [float(x) for x in np.linspace(args.eps_min, emax, args.npts)]
+        grid = [float(x) for x in np.linspace(args.eps_min, emax, args.npts)] if emax > args.eps_min else [float(args.eps_min)]
         r.update(calibration=P["cal"], eta_hat=P["eta"], level_se=dict(median=float(np.median(P["gh_se"])), p90=float(np.percentile(P["gh_se"], 90)), max=float(P["gh_se"].max())), rows_per_cluster=dict(min=int(P["st"]["rows_per_cluster"].min()), median=float(np.median(P["st"]["rows_per_cluster"]))), grid=grid, eps_max=emax, V=P["V"], V_plus_true=P["Vp_true"], V0_true=P["V0_true"], lp_mass=P["lp_mass"], supported=P["sup"],
                  n_merged_vars=int(P["nV"]), n_pairs=int(P["n_pairs"]), sigma_hat=P["sigma"], prep_seconds=time.perf_counter() - tc)
         print(f"[{method}] ARI {r['ari_vs_dgp']:.2f}  eps_max {emax:.2f}  grid {np.round(grid, 2).tolist()}  vars {P['nV']}  prep {r['prep_seconds']:.0f}s", flush=True)
@@ -209,6 +210,7 @@ if __name__ == "__main__":
     ap.add_argument("--data-dir", default=os.path.join(HERE, "..", "..", "data"))
     ap.add_argument("--lam", type=float, default=None, help="overlap threshold: pairs with pi/pi0 > lam go to the LP (None = only pi0 = 0, i.e. lambda = inf)")
     ap.add_argument("--beta", type=float, default=30.0, help="real arm: logging softmax inverse temperature (paper: 30)")
+    ap.add_argument("--logger", default="paper", choices=("paper", "true_q"), help="real arm logging policy: paper = softmax(beta * ridge r_hat) (paper real-data code), true_q = softmax(beta * true q) (paper synthetic-style)")
     ap.add_argument("--eps-target", type=float, default=0.1, help="real arm: target eps-greedy exploration (paper: 0.1)")
     ap.add_argument("--alpha", default="1.0", help="ridge penalty for the cluster-level centre and the level ridge: a number (plots 03-10 used 1.0) or 'cv' = chosen by out-of-fold MSE on logged rounds")
     ap.add_argument("--eta-se-z", type=float, default=None, help="per-cell level band eta_cell = max(rho, z * SE of the cell's level ridge estimate); default: eta = rho for every cell")

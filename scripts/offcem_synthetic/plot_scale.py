@@ -22,7 +22,7 @@ NAMES = {"kmeans": "K-means", "agglomerative": "Agglomerative (Ward)", "hierarch
 
 def world_line(w):
     if w.get("dataset"):
-        return f"{w['dataset']} (paper real-data setup, β = {w['beta']:g}, target ε = {w['eps_policy']:g}), weak overlap λ = {w['lam']:g}"
+        return f"{w['dataset']} ({'paper logger' if w.get('logger', 'paper') == 'paper' else 'softmax(β·q) logger'}, β = {w['beta']:g}, target ε = {w['eps_policy']:g}), weak overlap λ = {w['lam']:g}"
     return "original exclusions, λ = " + ("∞" if w.get("lam") is None else f"{w['lam']:g}")
 
 
