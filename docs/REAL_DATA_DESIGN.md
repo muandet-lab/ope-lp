@@ -70,3 +70,16 @@ Not in the workspace. EUR-Lex 4K from the Extreme Classification Repository (Bha
 2. Calibration: binomial plug-in for the noise term; binomial reference intervals.
 3. Driver flag `--real eurlex --lam 10 --clusterings random cooccur` reusing `scale_experiment.py`'s sweep, beliefs (B5, B7) and plots.
 4. Report: ε_max, LP mass, baseline and B7 bars per clustering, containment of V and of V⁰, with the paper's OffCEM point estimate alongside.
+
+## 6. Status (2026-11-08, evening): implemented and plumbing-tested
+Decisions taken: λ = 10 (weak overlap defines the LP region), plug-in Bernoulli noise term for calibration, 8,000 rounds, reference intervals with the Bernoulli sd bound 0.5 and z = 3.5.
+Code: `real_dataset.py` (paper's loader + `data_dir`), `real_world.py` (world wrapper, binomial calibration, label-co-occurrence action embedding, fake-data generator),
+`scale_experiment.py --real eurlex --lam 10 --alpha cv --eps-min 0.02 ...`. Two additions forced by the real data and applied generally:
+- `--alpha cv`: the ridge penalty (cluster-level centre and level ridge) chosen by out-of-fold squared error on the logged rounds. With 100 PCA dimensions and ~100 rows per cluster the
+  default α = 1 extrapolated to predictions outside [0, 1] (−1.3 to 1.7) and made every LP infeasible; α = 1000 was chosen on the fake data. Synthetic runs keep α = 1 unless asked.
+- the centre m̂ is clipped to the outcome range (a prediction of a mean in [0, 1]).
+Tested end to end on a fake extreme-classification dataset (`real_world.make_fake_xc`, same text format): λ = 10 puts essentially each user's favourite action into the LP (203 variables for 100
+users), the paper's random clusters and K-means both run, B5/B7 feasible, plots render. Fake-data numbers are not results. The unit→user mapping in `b3_lipschitz_experiment.prep` was fixed for
+user-level worlds in the process (no effect on round-level worlds).
+Run on EUR-Lex (files under `ope-lp/data/eurlex/{train,test}.txt`):
+    python scale_experiment.py --real eurlex --n 8000 --users 300 --C 100 --lam 10 --folds user --alpha cv --eps-min 0.02 --clusterings random kmeans agglomerative spectral --beliefs B5_range B5_q5 B7_ord B7_z3.5 B5_q5+B7_z3.5 --tag eurlex_lam10

@@ -4,3 +4,4 @@ slides_figs/scale/
 *.log
 .DS_Store
 slides_figs/scale/*.pdf
+data/

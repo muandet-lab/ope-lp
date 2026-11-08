@@ -46,27 +46,33 @@ LO, HI = -30.0, 30.0
 KNN = 3
 
 
-def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level"):
-    """W = None: the small world of plots 03-10 (SPLIT_WORLD, original exclusions) with K-means labels. Otherwise a prebuilt world and an action-label vector (any clustering)."""
+def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level", lam=None, limits=None, calibrate=None, sigma_ref=None, alpha=1.0):
+    """W = None: the small world of plots 03-10 (SPLIT_WORLD, original exclusions) with K-means labels. Otherwise a prebuilt world and an action-label vector (any clustering).
+    lam: overlap threshold defining the LP region (None = pi0 == 0 only). limits: outcome range (default [-30, 30]). calibrate: eps_max calibration function (default eps_sweep_dgp.calibrate_user_cells).
+    sigma_ref: noise sd used for logged reference intervals (default: the calibration's sigma_noise)."""
+    lo_, hi_ = (LO, HI) if limits is None else (float(limits[0]), float(limits[1]))
     if W is None:
         W = G.make_world(G.WorldCfg(**{**F.SPLIT_WORLD, "seed": seed, "exclusion": "round_random"}))
     km = KMeans(n_clusters=W["C"], n_init=10, random_state=0).fit_predict(np.asarray(W["action_x"], float)).astype(int) if lab is None else np.asarray(lab).astype(int)
     Wp = {**W, "cl": km, "C": int(km.max()) + 1}
-    M = G.get_model(Wp, model, "ridge", 5, 1.0, 1, user_folds=user_folds)
-    cal = S.calibrate_user_cells(Wp, M)
+    M = G.get_model(Wp, model, "ridge", 5, alpha, 1, user_folds=user_folds)
+    if limits is not None:
+        M = np.clip(M, lo_, hi_)                        # the centre is a prediction of a mean in the outcome range (e.g. a probability)
+    cal = (calibrate or S.calibrate_user_cells)(Wp, M)
     et = E.eta_hat(Wp, M, cal)
-    st = X.structures(Wp, M)
-    user = np.asarray(W["user_of_round"]); _, inv = np.unique(user, return_inverse=True)
-    nu, K, C = inv.max() + 1, W["K"], Wp["C"]
-    first = [np.flatnonzero(inv == k)[0] for k in range(nu)]
+    st = X.structures(Wp, M, lam, alpha)
+    user = np.asarray(W["user_of_round"]); _, inv_round = np.unique(user, return_inverse=True)     # round -> user index
+    nu, K, C = inv_round.max() + 1, W["K"], Wp["C"]
+    nU = len(W["X_unit"]); inv = np.zeros(nU, int); inv[W["uid"]] = inv_round                      # unit -> user index (round_random: unit = round; user_fixed: unit = user)
+    first = np.array([np.flatnonzero(inv == k)[0] for k in range(nu)])                              # one unit per user
     Xu, qu = W["X_unit"][first], W["q_unit"][first]
     Zs = (Xu - Xu.mean(0)) / Xu.std(0)
     D = np.sqrt(((Zs[:, None] - Zs[None]) ** 2).sum(-1)); np.fill_diagonal(D, np.inf)
-    P = dict(W=Wp, M=M, cal=cal, eta=et["eta_hat"], st=st, inv=inv, nu=nu, K=K, C=C, D=D, qu=qu, sigma=cal["sigma_noise"], seed=seed)
+    P = dict(W=Wp, M=M, cal=cal, eta=et["eta_hat"], st=st, inv=inv, nu=nu, K=K, C=C, D=D, qu=qu, sigma=(cal["sigma_noise"] if sigma_ref is None else float(sigma_ref)), seed=seed, lam=lam, LO=lo_, HI=hi_, limits=[lo_, hi_], alpha=alpha)
     U, ident, wu, pi = st["U"], st["ident"], st["wu"], st["pi"]
     pu, pa = np.nonzero(U); pc = km[pa]; keep = ident[pu, pc]
     coef_all = wu[pu] * pi[pu, pa]
-    P["const_lo"], P["const_up"] = float((coef_all[~keep] * LO).sum()), float((coef_all[~keep] * HI).sum())
+    P["const_lo"], P["const_up"] = float((coef_all[~keep] * lo_).sum()), float((coef_all[~keep] * hi_).sum())
     iu, ia, ic, coef = pu[keep], pa[keep], pc[keep], coef_all[keep]
     vkeys, vid = np.unique(inv[iu] * K + ia, return_inverse=True)
     nV = len(vkeys); P.update(nV=nV, v_user=vkeys // K, v_act=vkeys % K, vid=vid)
@@ -80,7 +86,7 @@ def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level"):
     # logged references: mean reward of (user, action) pairs with logged rounds
     act, y = W["act"], W["y"]
     s, n = np.zeros((nu, K)), np.zeros((nu, K))
-    np.add.at(s, (inv, act), y); np.add.at(n, (inv, act), 1)
+    np.add.at(s, (inv_round, act), y); np.add.at(n, (inv_round, act), 1)
     with np.errstate(invalid="ignore", divide="ignore"):
         mean = s / n; half = 1.96 * P["sigma"] / np.sqrt(n)
     P["ref_log"] = (np.where(n > 0, mean - half, np.nan), np.where(n > 0, mean + half, np.nan)); P["ref_n"] = n
@@ -89,7 +95,7 @@ def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level"):
     # supported estimates and SEs (unchanged by the belief)
     sup = {}
     for sp in SUPS:
-        r = G.evaluate(Wp, M, {**F.SPLIT_SPEC, "overlap_lambda": None, "supported": sp, "eps_lc": [2 * 5.85], "eta_value": et["eta_hat"]})
+        r = G.evaluate(Wp, M, {**F.SPLIT_SPEC, "overlap_lambda": lam, "limits": [lo_, hi_], "ridge_alpha": alpha, "supported": sp, "eps_lc": [2 * 5.85 * (hi_ - lo_) / 60.0], "eta_value": et["eta_hat"]})
         d = r["data"]
         sup[sp] = dict(estimate=d["supported_estimate"], supported_se=d["supported_se"], total_se=d["total_se"], error=d["supported_error"])
         P.update(V=d["oracle_V"], Vp_true=d["oracle_supported_part"], V0_true=d["oracle_unsupported_part"], lp_mass=d["unsupported_policy_mass"])
@@ -101,7 +107,8 @@ def box(P, L, ref):
     """Per-variable bounds from the reference boxes of OTHER users with the same action, stretched by L d. Loops over actions (memory O(users^2), not users^2 x actions)."""
     Rlo, Rhi = ref
     D, VID = P["D"], P["VID"]
-    lb, ub, avail = np.full(P["nV"], LO), np.full(P["nV"], HI), np.zeros(P["nV"], int)
+    lo_, hi_ = P.get("LO", LO), P.get("HI", HI)
+    lb, ub, avail = np.full(P["nV"], lo_), np.full(P["nV"], hi_), np.zeros(P["nV"], int)
     for a in range(P["K"]):
         us = np.flatnonzero(VID[:, a] >= 0)
         if not len(us):
@@ -112,7 +119,7 @@ def box(P, L, ref):
         if not len(refs):
             continue
         Ds = L * D[np.ix_(us, refs)]                      # inf on the diagonal (a user is not its own reference)
-        lb[vid] = np.maximum((Rlo[refs, a][None] - Ds).max(1), LO); ub[vid] = np.minimum((Rhi[refs, a][None] + Ds).min(1), HI)
+        lb[vid] = np.maximum((Rlo[refs, a][None] - Ds).max(1), lo_); ub[vid] = np.minimum((Rhi[refs, a][None] + Ds).min(1), hi_)
     return lb, ub, avail
 
 

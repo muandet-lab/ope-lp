@@ -44,19 +44,20 @@ SUPS = ("dr", "ips", "offcem")
 Z = 2.0
 
 
-def structures(W, M):
-    """Pieces evaluate() builds internally (lambda = inf, ridge centre, aggregate noise), reproduced so the extra LP sees the same b_hat / identified cells."""
+def structures(W, M, lam=None, alpha=1.0):
+    """Pieces evaluate() builds internally (ridge centre, aggregate noise), reproduced so the extra LP sees the same b_hat / identified cells.
+    lam = None: unsupported = pi0 == 0 (lambda = inf). Otherwise also pairs with importance weight pi/pi0 > lam (weak overlap), as evaluate() does."""
     cl, C, n = W["cl"], W["C"], W["n"]
     pi, pi0, wu = W["pi_unit"], W["pi0_unit"], W["counts"] / W["n"]
     uid, act, y = W["uid"], W["act"], W["y"]
-    U = pi0 == 0
+    U = (pi0 == 0) | (pi > lam * pi0) if lam is not None else (pi0 == 0)
     nU = pi.shape[0]
     resid, clr = y - M[uid, act], cl[act]
     pi0_c = np.stack([pi0[:, cl == c].sum(1) for c in range(C)], 1)
     pi_c = np.stack([pi[:, cl == c].sum(1) for c in range(C)], 1)
     pm_cell = np.stack([(pi[:, cl == c] * U[:, cl == c]).sum(1) for c in range(C)], 1)
     support_viol = (pi_c > 0) & (pi0_c <= 0)
-    Gh, _, agg_se = G.level_ridge(W["X_rows"], clr, resid, W["X_unit"], C, 1.0, 1, agg_w=wu[:, None] * pm_cell * ~support_viol)
+    Gh, _, agg_se = G.level_ridge(W["X_rows"], clr, resid, W["X_unit"], C, alpha, 1, agg_w=wu[:, None] * pm_cell * ~support_viol)
     ident = ~support_viol & ~np.isnan(Gh)
     return dict(U=U, G=Gh, ident=ident, wu=wu, pi=pi, agg_se=agg_se, nU=nU)
 

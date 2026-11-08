@@ -26,15 +26,15 @@ import eps_sweep_dgp as S
 import make_slide_figures as F
 import partial_ope_global as G
 import clustering as CL
+import real_world as RW
 
 warnings.filterwarnings("ignore")
 HERE = os.path.dirname(os.path.abspath(__file__))
 RES = os.path.join(HERE, "..", "..", "results_offcem_global")
-LO, HI = B.LO, B.HI
 
 
 def labels(W, method, seed):
-    if method == "dgp":
+    if method in ("dgp", "random"):          # dgp = the synthetic generator's clusters; random = the paper's uniform random clusters stored in the real world
         return np.asarray(W["cl"]).astype(int)
     f = {"kmeans": CL.cluster_kmeans, "agglomerative": CL.cluster_agglomerative, "hierarchical": CL.cluster_agglomerative, "spectral": CL.cluster_spectral}[method]
     lab = np.asarray(f(np.asarray(W["action_x"], float), W["C"], random_state=seed)).astype(int)
@@ -84,20 +84,36 @@ def dump(d, path):
 def run(args):
     out = os.path.join(RES, f"scale_{args.tag}_seed{args.seed}.json")
     d = json.load(open(out)) if os.path.exists(out) else {}
-    cfg = dict(K=args.K, n=args.n, users=args.users, C=args.C, def_frac=args.def_frac, exclusion="round_random", sigma=args.sigma, beta=-0.1, eps_policy=0.2, clustering="original", seed=args.seed)
     t0 = time.perf_counter()
-    W = G.make_world(G.WorldCfg(**cfg))
-    d["world"] = dict(cfg, folds=args.folds, model=args.model, build_seconds=time.perf_counter() - t0, n_rounds=int(W["n"]), n_users=int(len(np.unique(W["user_of_round"]))), dgp_clusters=int(W["C"]))
+    if args.real:
+        rc = RW.RealCfg(dataset=args.real, n=args.n, users=args.users, beta=args.beta, eps_policy=args.eps_target, lam=args.lam, C=args.C, seed=args.seed)
+        W = RW.make_real_world(rc, args.data_dir); cfg = {k: v for k, v in rc.__dict__.items()}
+        limits, lam, calibrate, sigma_ref = [0.0, 1.0], args.lam, RW.calibrate_binomial, 0.5      # Bernoulli: range [0,1]; reference intervals use the sd bound 0.5
+    else:
+        cfg = dict(K=args.K, n=args.n, users=args.users, C=args.C, def_frac=args.def_frac, exclusion="round_random", sigma=args.sigma, beta=-0.1, eps_policy=0.2, clustering="original", seed=args.seed)
+        W = G.make_world(G.WorldCfg(**cfg)); limits, lam, calibrate, sigma_ref = [-30.0, 30.0], args.lam, None, None
+    d["world"] = dict(cfg, folds=args.folds, model=args.model, limits=limits, lam=lam, eps_min=args.eps_min, build_seconds=time.perf_counter() - t0, n_rounds=int(W["n"]), n_users=int(len(np.unique(W["user_of_round"]))), dgp_clusters=int(W["C"]))
     d.setdefault("clusterings", {})
-    print(f"world built in {d['world']['build_seconds']:.1f}s: {args.K} actions, {args.n} rounds, {d['world']['n_users']} users, {W['C']} DGP clusters", flush=True)
+    print(f"world built in {d['world']['build_seconds']:.1f}s: {W['K']} actions, {args.n} rounds, {d['world']['n_users']} users, {W['C']} DGP clusters", flush=True)
     for method in args.clusterings:
         tc = time.perf_counter()
         r = d["clusterings"].setdefault(method, {})
         r.setdefault("runs", {})
         lab = labels(W, method, args.seed)
         r["ari_vs_dgp"] = float(adjusted_rand_score(W["cl"], lab)); r["n_clusters"] = int(lab.max()) + 1
-        P = B.prep(args.seed, user_folds=(args.folds == "user"), W=W, lab=lab, model=args.model)
-        Wp, M = P["W"], P["M"]
+        if args.alpha == "cv":                           # ridge penalty by out-of-fold squared error of the cross-fitted centre on the logged rounds (logged data only)
+            Wl = {**W, "cl": lab, "C": int(lab.max()) + 1}; oof = {}
+            for a_ in (0.1, 1.0, 10.0, 100.0, 1000.0):
+                Ma = G.get_model(Wl, args.model, "ridge", 5, a_, 1, user_folds=(args.folds == "user"))
+                if limits is not None:
+                    Ma = np.clip(Ma, limits[0], limits[1])
+                oof[a_] = float(((W["y"] - Ma[W["uid"], W["act"]]) ** 2).mean())
+            alpha = min(oof, key=oof.get); r["ridge_alpha_cv"] = dict(oof_mse=oof, chosen=alpha)
+            print(f"[{method}] ridge alpha by out-of-fold MSE: {oof} -> {alpha}", flush=True)
+        else:
+            alpha = float(args.alpha)
+        P = B.prep(args.seed, user_folds=(args.folds == "user"), W=W, lab=lab, model=args.model, lam=lam, limits=limits, calibrate=calibrate, sigma_ref=sigma_ref, alpha=alpha)
+        Wp, M = P["W"], P["M"]; LO, HI = P["LO"], P["HI"]
         P["gh_cell"] = P["gh"]                            # P["gh"] is already one level estimate per (round, cluster) cell
         if args.ref_z is not None:                        # one reference rule for every logged interval (B3 references, B5 endpoints); B7 logged bounds use --z
             mean_, n_ = (P["ref_log"][0] + P["ref_log"][1]) / 2, P["ref_n"]
@@ -112,12 +128,12 @@ def run(args):
         else:
             cal["sigma_source"] = "repeats"
         emax = cal["eps_max"]
-        if np.isfinite(emax) and emax <= 1.0:
-            raise SystemExit(f"[{method}] eps_max = {emax:.3f} <= 1: the sweep grid [1, eps_max] is empty. Stopping for review (protocol step 7).")
+        if np.isfinite(emax) and emax <= args.eps_min:
+            raise SystemExit(f"[{method}] eps_max = {emax:.3f} <= eps_min = {args.eps_min}: the sweep grid is empty. Stopping for review (protocol step 7).")
         if not np.isfinite(emax):
             raise SystemExit(f"[{method}] eps_max is NaN: the noise sd could not be estimated ({cal['n_repeat_dof']} repeat dof from repeated (user, action) logged pairs, need >= 10). "
                              "Use fewer users or more rounds (the small world had 10 rounds per user), or pass --noise-sd <value> to take the noise sd as known.")
-        grid = [float(x) for x in (np.linspace(1.0, emax, args.npts) if emax > 1.0 else [emax])]
+        grid = [float(x) for x in np.linspace(args.eps_min, emax, args.npts)]
         r.update(calibration=P["cal"], eta_hat=P["eta"], grid=grid, eps_max=emax, V=P["V"], V_plus_true=P["Vp_true"], V0_true=P["V0_true"], lp_mass=P["lp_mass"], supported=P["sup"],
                  n_merged_vars=int(P["nV"]), n_pairs=int(P["n_pairs"]), sigma_hat=P["sigma"], prep_seconds=time.perf_counter() - tc)
         print(f"[{method}] ARI {r['ari_vs_dgp']:.2f}  eps_max {emax:.2f}  grid {np.round(grid, 2).tolist()}  vars {P['nV']}  prep {r['prep_seconds']:.0f}s", flush=True)
@@ -125,7 +141,7 @@ def run(args):
         if "sweep" not in r:
             ts = time.perf_counter(); sw = {}
             for sp in B.SUPS:
-                res = G.evaluate(Wp, M, {**F.SPLIT_SPEC, "overlap_lambda": None, "supported": sp, "eps_lc": [2 * g for g in grid]})
+                res = G.evaluate(Wp, M, {**F.SPLIT_SPEC, "overlap_lambda": lam, "limits": limits, "ridge_alpha": alpha, "supported": sp, "eps_lc": [2 * g for g in grid]})
                 sw[sp] = [dict(eps=g, ok=x["status"] == "optimal", status=x["status"], lo=x.get("with_se", [None, None])[0], hi=x.get("with_se", [None, None])[1],
                                lp_lo=x.get("unsupported_interval", [None, None])[0], lp_hi=x.get("unsupported_interval", [None, None])[1], covers_V=x.get("contains_V_with_se")) for g, x in zip(grid, res["results"])]
             r["sweep"] = sw; r["sweep_seconds"] = time.perf_counter() - ts; dump(d, out)
@@ -186,7 +202,14 @@ if __name__ == "__main__":
     ap.add_argument("--K", type=int, default=1000); ap.add_argument("--n", type=int, default=3000); ap.add_argument("--users", type=int, default=200); ap.add_argument("--C", type=int, default=50)
     ap.add_argument("--def-frac", type=float, default=0.5); ap.add_argument("--sigma", type=float, default=3.0, help="DGP reward noise sd")
     ap.add_argument("--noise-sd", type=float, default=None, help="take the noise sd as KNOWN for calibration and reference boxes (when repeated logged pairs are too sparse to estimate it)")
-    ap.add_argument("--clusterings", nargs="+", default=["kmeans", "agglomerative", "spectral"], choices=("kmeans", "agglomerative", "hierarchical", "spectral", "dgp"))
+    ap.add_argument("--clusterings", nargs="+", default=["kmeans", "agglomerative", "spectral"], choices=("kmeans", "agglomerative", "hierarchical", "spectral", "dgp", "random"))
+    ap.add_argument("--real", default=None, choices=("eurlex", "wiki"), help="real-data arm: the paper's extreme-classification bandit (needs --data-dir with <name>/{train,test}.txt)")
+    ap.add_argument("--data-dir", default=os.path.join(HERE, "..", "..", "data"))
+    ap.add_argument("--lam", type=float, default=None, help="overlap threshold: pairs with pi/pi0 > lam go to the LP (None = only pi0 = 0, i.e. lambda = inf)")
+    ap.add_argument("--beta", type=float, default=30.0, help="real arm: logging softmax inverse temperature (paper: 30)")
+    ap.add_argument("--eps-target", type=float, default=0.1, help="real arm: target eps-greedy exploration (paper: 0.1)")
+    ap.add_argument("--alpha", default="1.0", help="ridge penalty for the cluster-level centre and the level ridge: a number (plots 03-10 used 1.0) or 'cv' = chosen by out-of-fold MSE on logged rounds")
+    ap.add_argument("--eps-min", type=float, default=1.0, help="lowest displayed eps of the sweep grid (synthetic: 1.0; real [0,1] outcomes: e.g. 0.02)")
     ap.add_argument("--npts", type=int, default=5, help="eps grid points in [1, eps_max] (plot 04 used 5)")
     ap.add_argument("--L", default="3.0", help="Lipschitz constant for B3: a number, or 'auto' = estimated from logged data (estimate_L), frozen before any bound")
     ap.add_argument("--z", type=float, default=3.5, help="margin multiplier for B7 logged lower bounds (and the B3_z variant)")

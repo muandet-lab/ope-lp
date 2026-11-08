@@ -17,7 +17,13 @@ from matplotlib.lines import Line2D
 BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 EST = {"ips": ("IPS", "#1f77b4"), "dr": ("DR", "#17becf"), "offcem": ("OffCEM", "#e377c2")}
 STY = ((-0.24, "dr", "o", True, "-"), (0.0, "ips", "o", False, (0, (2.2, 1.6))), (0.24, "offcem", "D", True, (0, (0.8, 1.0))))
-NAMES = {"kmeans": "K-means", "agglomerative": "Agglomerative (Ward)", "hierarchical": "Agglomerative (Ward)", "spectral": "Spectral", "dgp": "DGP clusters"}
+NAMES = {"kmeans": "K-means", "agglomerative": "Agglomerative (Ward)", "hierarchical": "Agglomerative (Ward)", "spectral": "Spectral", "dgp": "DGP clusters", "random": "Paper's random clusters"}
+
+
+def world_line(w):
+    if w.get("dataset"):
+        return f"{w['dataset']} (paper real-data setup, β = {w['beta']:g}, target ε = {w['eps_policy']:g}), weak overlap λ = {w['lam']:g}"
+    return "original exclusions, λ = " + ("∞" if w.get("lam") is None else f"{w['lam']:g}")
 
 
 def legend_handles(r):
@@ -50,8 +56,8 @@ def sweep_plot(d, method, stem):
     pad = 0.06 * (max(vals) - min(vals)); ax.set_ylim(min(vals) - pad, max(vals) + pad)
     ax.set_xticks(range(len(grid))); ax.set_xticklabels([f"ε = {g:.2f}" + ("\n(ε_max)" if k == len(grid) - 1 else "") for k, g in enumerate(grid)], fontsize=12); ax.set_xlim(-0.6, len(grid) - 0.4)
     ax.set_ylabel("Policy value", fontsize=13)
-    ax.set_title(f"{NAMES[method]} (C = {r['n_clusters']}, ARI vs DGP {r['ari_vs_dgp']:.2f}), original exclusions, λ = ∞: ε swept over [1, ε_max = {r['eps_max']:.2f}]\n"
-                 f"{w['K']} actions, {w['n']} rounds, {w['n_users']} users, {w['dgp_clusters']} DGP clusters, seed {w['seed']}", fontsize=12)
+    ax.set_title(f"{NAMES.get(method, method)} (C = {r['n_clusters']}, ARI vs {'paper random' if w.get('dataset') else 'DGP'} {r['ari_vs_dgp']:.2f}), {world_line(w)}: ε swept over [{w.get('eps_min', 1.0):g}, ε_max = {r['eps_max']:.2f}]\n"
+                 f"{w['K']} actions, {w['n']} rounds, {w['n_users']} users, seed {w['seed']}", fontsize=12)
     ax.legend(handles=legend_handles(r), loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False, fontsize=10.5)
     cal = r["calibration"]
     note = (f"One world. ε_max = Z·τ̂ with Z = 2, τ̂ = {cal['tau']:.2f} from {cal['n_pairs']} within-(user, cluster) logged contrasts, noise σ̂ = {cal['sigma_noise']:.2f} ({'taken as known' if cal.get('sigma_source') == 'given' else str(cal['n_repeat_dof']) + ' repeat dof'}). "

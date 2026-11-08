@@ -54,7 +54,7 @@ def recentre_delta(P, lam_c=100.0):
 
 def b5_bounds(P, mode):
     """Per-cluster [L_c, U_c] from logged (user, action) boxes; returned per variable."""
-    Rlo, Rhi = P["ref_log"]; cl = P["W"]["cl"]; C = P["C"]
+    Rlo, Rhi = P["ref_log"]; cl = P["W"]["cl"]; C = P["C"]; LO, HI = P.get("LO", B.LO), P.get("HI", B.HI)
     Lc, Uc = np.full(C, LO), np.full(C, HI); nref = np.zeros(C, int)
     for c in range(C):
         cols = np.flatnonzero(cl == c)
@@ -74,7 +74,7 @@ def b7_rows(P, z=None):
     z = None: ordering among LP variables only. z > 0: also use logged pairs with margin z sigma / sqrt(n) (z = 3.5 ~ multiplicity-corrected for ~10 logged pairs per user)."""
     W, st = P["W"], P["st"]
     pi = st["pi"]; inv = P["inv"]; VID = P["VID"]; nu, K = P["nu"], P["K"]
-    Rlo, Rhi = P["ref_log"]; n_ref = P["ref_n"]; mean = (Rlo + Rhi) / 2
+    Rlo, Rhi = P["ref_log"]; n_ref = P["ref_n"]; mean = (Rlo + Rhi) / 2; LO, HI = P.get("LO", B.LO), P.get("HI", B.HI)
     first = np.array([np.flatnonzero(inv == k)[0] for k in range(nu)])
     astar = pi[first].argmax(1)
     lb_x, ub_x = np.full(P["nV"], LO), np.full(P["nV"], HI)
