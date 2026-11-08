@@ -181,3 +181,33 @@ The LP interval contains the true V⁰ = 3.71 in every feasible run.
 3. **B5 does nothing** (≤ 0.04), as on the small world.
 4. **Coverage is lost at the top, and the LP is not the cause.** The LP part contains V⁰ with 1.8–2 units to spare; the bars miss V because the supported estimate is 2.3–3.2 below the true V⁺. Under λ = ∞ the target's favourite action (the top of 1000) is usually supported with a huge weight and the cluster model under-predicts it; OffCEM is no better than DR here. Beliefs on the unsupported part cannot repair that. Next step for coverage: the λ = 10 variant (weak-overlap pairs handed to the LP), not more beliefs.
 5. **Cost.** Baseline solve ≈ 13 min per bar (both directions) on the VM; a full clustering (20 items incl. three coupling runs) 4.1–5.2 h; three clusterings in parallel on 16 cores ≈ 5.3 h wall clock. Without B3: ≈ 2.5 h per clustering.
+
+## 10. Protocol run with OffCEM's two-step reward model as the LP centre (2026-11-08) — small world, K-means
+
+Request: keep the paper's reward model f̂ = ĝ(x, c) + ĥ(x, a) (released architecture and training, logged data only), user-level folds, η = ρ, K-means, original exclusions, λ = ∞, no recentring;
+L from logged data; one reference rule for every logged interval. Small world (200 actions, 1000 rounds, 100 users, 10 clusters), seed 7000.
+Command: `scale_experiment.py --K 200 --n 1000 --users 100 --C 10 --clusterings kmeans --model two_step --folds user --L auto --ref-z 3.5 --tag smoke_protocol`.
+Data `results_offcem_global/scale_smoke_protocol_seed7000.json`; plots `slides_figs/scale/smoke_protocol_seed7000_kmeans_{epsSweep,beliefs}.png`.
+
+New pieces: `--model two_step` (partial_ope_global.fit_two_step_units: paper's pairwise network + OBP MLP cluster regression, cross-fitted); `--L auto` (estimate_L: 95th percentile of
+noise-corrected same-action slopes |ȳ_ua − ȳ_va| / d_uv across user pairs, logged data only, frozen before any bound); `--ref-z` (one z for all logged intervals); truth-only checks
+(LC violation share, feasibility of the true mean vector under some admissible b); constraint counts and a never-wider check per variant.
+
+Calibration (two-step residuals, user folds): σ̂ = 2.17 (28 repeat dof), 473 contrasts, D = 31.3, τ̂² = 26.6, **ε_max = 10.31** (ridge centre: 7.47 by-round / 6.27 by-user). Grid [1, 3.33, 5.66, 7.99, 10.31].
+L̂ = 2.97 (2329 same-action user pairs; median slope 0.77, p75 1.60, max 5.87; 34 % of pairs are zero after noise correction). Supported: DR 0.71, IPS 0.20, OffCEM 0.80 (true V⁺ 3.03). V = 5.95.
+f̂ ranges from −28 to +37 (sd 7.7) while the true q ranges from −15 to +19: the per-action heads of ĥ, with ~4 pairwise rows each, extrapolate wildly.
+
+| ε | baseline DR bar | + B3 (L̂ 2.97, z 3.5) | + B5 range | + B5 5–95 % | + B7 ord | + B7 + logged | all |
+|---|---|---|---|---|---|---|---|
+| 7.99 | [−6.93, 9.54] w 16.5 | infeasible | [−6.59, 8.86] w 15.4 | infeasible | infeasible | infeasible | infeasible |
+| 10.31 (ε_max) | [−9.16, 11.66] w 20.8 | infeasible | [−8.03, 10.28] w 18.3 | [−5.90, 8.88] w 14.8 | infeasible | infeasible | infeasible |
+
+Truth checks: at ε = 7.99, 39 % of LP mass has its true mean outside the LC window around f̂, and the true mean vector is infeasible for the baseline LP (4074 of 9997 cells, 3101 with
+true spread above 2ρ). At ε_max still 24 % / 1513 cells. The baseline bar nevertheless contains V because it is 16–21 wide. Cause of the B7 infeasibility: for 3 users f̂ puts the
+favourite action more than 4ρ ≈ 32 below another action, so ordering cannot hold inside the LC windows (gaps 0.8, 1.6, 5.4). B3 is infeasible because the reference boxes from other
+users (which contain the truth for 98 % of the mass) contradict LC windows centred on a wild f̂.
+
+Conclusion: with the paper's two-step model as the per-pair centre, the beliefs are false for the truth (LC violated on a quarter to a third of the mass even at ε_max), the bars are
+1.5–2× wider than with the cluster-level ridge, and every informative belief is infeasible. The paper's ĥ is unlearnable at this density (≈ 4 pairwise rows per action head; the
+paper's own default is sparser) and is noise with sd ≈ 3; a point estimator averages that noise away, a per-pair constraint set cannot. The usable centre is ĝ alone (the ridge).
+The logged-data L̂ = 2.97 agrees with the earlier feasibility floor of 3 and with the oracle p95 slope of 2.32, so L = 3 was not unreasonable, but it is now estimated rather than chosen.

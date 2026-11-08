@@ -42,6 +42,41 @@ def labels(W, method, seed):
     return lab
 
 
+def estimate_L(P, q=0.95, min_pairs=50):
+    """Logged-data Lipschitz constant: over all pairs of users (u, v) that both logged the same action a, the noise-corrected slope
+    s_uv,a^2 = max(0, (ybar_ua - ybar_va)^2 - sigma_hat^2 (1/n_ua + 1/n_va)) / d_uv^2 ; L_hat = q-quantile of s (default 95th). Uses only logged means, counts, sigma_hat and
+    standardised-context distances. No truth. Reports the pair count; fewer than min_pairs -> status 'insufficient' (L_hat still returned for transparency)."""
+    Rlo, Rhi = P["ref_log"]; mean = (Rlo + Rhi) / 2; n = P["ref_n"]; D = P["D"]; s2 = P["sigma"] ** 2
+    slopes = []
+    for a in range(P["K"]):
+        us = np.flatnonzero(n[:, a] > 0)
+        if len(us) < 2:
+            continue
+        i, j = np.triu_indices(len(us), 1); ui, uj = us[i], us[j]
+        num = np.maximum((mean[ui, a] - mean[uj, a]) ** 2 - s2 * (1.0 / n[ui, a] + 1.0 / n[uj, a]), 0.0)
+        slopes.append(np.sqrt(num) / D[ui, uj])
+    slopes = np.concatenate(slopes) if slopes else np.array([])
+    out = dict(n_pairs=int(len(slopes)), quantile=q, status="ok" if len(slopes) >= min_pairs else "insufficient")
+    if len(slopes):
+        out.update(L_hat=float(np.quantile(slopes, q)), median=float(np.median(slopes)), p75=float(np.quantile(slopes, 0.75)), max=float(slopes.max()), share_zero_after_noise_correction=float((slopes == 0).mean()))
+    return out
+
+
+def truth_checks(P, rho, eta):
+    """Truth-only diagnostics (after the fact): share of LP mass whose true mean violates LC |q - m_hat - b_hat| <= rho (b at its estimate), and whether the TRUE mean vector is feasible
+    for some admissible b per (round, cluster) cell: need max(q - m_hat) - min(q - m_hat) <= 2 rho within the cell and [max - rho, min + rho] to intersect [g_hat - eta, g_hat + eta]."""
+    A = P["A_base"].tocoo(); nV, npairs = P["nV"], P["n_pairs"]
+    m = (A.row < npairs) & (A.col >= nV); cid = np.zeros(npairs, int); cid[A.row[m]] = A.col[m] - nV
+    qp = P["qu"][P["v_user"], P["v_act"]][P["vid"]]; r = qp - P["mp"]                     # per pair: true mean minus model prediction
+    w = P["coef_v"][P["vid"]]
+    lc_viol = float((w * (np.abs(r - P["gh"][cid]) > rho + 1e-9)).sum() / w.sum())
+    hi = np.full(P["Kc"], -np.inf); lo = np.full(P["Kc"], np.inf); np.maximum.at(hi, cid, r); np.minimum.at(lo, cid, r)
+    b_lo, b_hi = np.maximum(hi - rho, P["gh_cell"] - eta), np.minimum(lo + rho, P["gh_cell"] + eta)
+    bad = b_lo > b_hi + 1e-9
+    return dict(lc_violation_share_mass=lc_viol, true_vector_feasible=bool(not bad.any()), cells_infeasible_for_truth=int(bad.sum()), cells=int(P["Kc"]),
+                cells_spread_over_2rho=int(((hi - lo) > 2 * rho + 1e-9).sum()))
+
+
 def dump(d, path):
     json.dump(d, open(path, "w"), indent=1, default=lambda o: o.item() if hasattr(o, "item") else str(o))
 
@@ -63,6 +98,12 @@ def run(args):
         r["ari_vs_dgp"] = float(adjusted_rand_score(W["cl"], lab)); r["n_clusters"] = int(lab.max()) + 1
         P = B.prep(args.seed, user_folds=(args.folds == "user"), W=W, lab=lab, model=args.model)
         Wp, M = P["W"], P["M"]
+        P["gh_cell"] = P["gh"]                            # P["gh"] is already one level estimate per (round, cluster) cell
+        if args.ref_z is not None:                        # one reference rule for every logged interval (B3 references, B5 endpoints); B7 logged bounds use --z
+            mean_, n_ = (P["ref_log"][0] + P["ref_log"][1]) / 2, P["ref_n"]
+            with np.errstate(invalid="ignore", divide="ignore"):
+                hz_ = args.ref_z * P["sigma"] / np.sqrt(n_)
+            P["ref_log"] = (np.where(n_ > 0, mean_ - hz_, np.nan), np.where(n_ > 0, mean_ + hz_, np.nan))
         cal = P["cal"]
         if args.noise_sd is not None:                     # repeats too sparse for a data-only sigma: take the noise sd as known (an assumption; recorded in the JSON)
             cal["sigma_noise_estimated"] = cal["sigma_noise"]; cal["sigma_noise"] = float(args.noise_sd); cal["sigma_source"] = "given"
@@ -71,6 +112,8 @@ def run(args):
         else:
             cal["sigma_source"] = "repeats"
         emax = cal["eps_max"]
+        if np.isfinite(emax) and emax <= 1.0:
+            raise SystemExit(f"[{method}] eps_max = {emax:.3f} <= 1: the sweep grid [1, eps_max] is empty. Stopping for review (protocol step 7).")
         if not np.isfinite(emax):
             raise SystemExit(f"[{method}] eps_max is NaN: the noise sd could not be estimated ({cal['n_repeat_dof']} repeat dof from repeated (user, action) logged pairs, need >= 10). "
                              "Use fewer users or more rounds (the small world had 10 rounds per user), or pass --noise-sd <value> to take the noise sd as known.")
@@ -94,11 +137,14 @@ def run(args):
         with np.errstate(invalid="ignore", divide="ignore"):
             hz = args.z * P["sigma"] / np.sqrt(n)
         P["ref_log_z"] = (np.where(n > 0, mean - hz, np.nan), np.where(n > 0, mean + hz, np.nan))
-        lb3, ub3, av3 = B.box(P, args.L, P["ref_log"]); lb3z, ub3z, _ = B.box(P, args.L, P["ref_log_z"])
+        Linfo = estimate_L(P) if args.L == "auto" else dict(status="given", L_hat=float(args.L))
+        L_use = float(Linfo["L_hat"]); r["L_calibration"] = Linfo
+        print(f"[{method}] L: {Linfo}", flush=True)
+        lb3, ub3, av3 = B.box(P, L_use, P["ref_log"]); lb3z, ub3z, _ = B.box(P, L_use, P["ref_log_z"])
         b5 = {m: X.b5_bounds(P, m) for m in ("range", "q5")}
         b7 = {"B7_ord": X.b7_rows(P, None), f"B7_z{args.z:g}": X.b7_rows(P, args.z)}
         w = P["coef_v"]
-        r["beliefs_info"] = dict(L=args.L, z=args.z, b3_refs_per_var_median=float(np.median(av3)), b3_share_vars_with_ref=float((av3 >= 1).mean()),
+        r["beliefs_info"] = dict(L=L_use, L_source=("logged-data 95th pct of noise-corrected same-action slopes" if args.L == "auto" else "given"), z=args.z, ref_z=args.ref_z, b3_refs_per_var_median=float(np.median(av3)), b3_share_vars_with_ref=float((av3 >= 1).mean()),
                                  b3_true_outside_mass=float((w * ((qv < lb3 - 1e-9) | (qv > ub3 + 1e-9))).sum() / w.sum()),
                                  b3z_true_outside_mass=float((w * ((qv < lb3z - 1e-9) | (qv > ub3z + 1e-9))).sum() / w.sum()),
                                  b5={m: dict(v[2], true_outside_mass=float((w * ((qv < v[0] - 1e-9) | (qv > v[1] + 1e-9))).sum() / w.sum())) for m, v in b5.items()},
@@ -108,7 +154,8 @@ def run(args):
             P["eta"] = rho
             lb5r, ub5r, _ = b5["range"]; lb5q, ub5q, _ = b5["q5"]
             domo, lb7o, ub7o, _ = b7["B7_ord"]; domz, lb7z, ub7z, _ = b7[f"B7_z{args.z:g}"]
-            items = [("baseline", np.full(P["nV"], LO), np.full(P["nV"], HI), False, None), ("B3", lb3, ub3, True, None), (f"B3_z{args.z:g}", lb3z, ub3z, True, None),
+            r.setdefault("truth_checks", {})[str(rho)] = truth_checks(P, rho, P["eta"])
+            items = [("baseline", np.full(P["nV"], LO), np.full(P["nV"], HI), False, None), ("B3", lb3, ub3, True, None)] + ([] if args.ref_z is not None else [(f"B3_z{args.z:g}", lb3z, ub3z, True, None)]) + [
                      ("B5_range", lb5r, ub5r, False, None), ("B5_q5", lb5q, ub5q, False, None), ("B7_ord", lb7o, ub7o, False, domo), (f"B7_z{args.z:g}", lb7z, ub7z, False, domz),
                      (f"B5_q5+B7_z{args.z:g}", np.maximum(lb5q, lb7z), np.minimum(ub5q, ub7z), False, domz),
                      (f"B3z+B5_q5+B7_z{args.z:g}", np.maximum(np.maximum(lb3z, lb5q), lb7z), np.minimum(np.minimum(ub3z, ub5q), ub7z), True, domz)]
@@ -118,8 +165,12 @@ def run(args):
                 key = f"{rho}|{name}"
                 if key in r["runs"] and not args.redo:
                     continue
-                lo0, up0, info, secs = X.solve_both(P, rho, lb, ub, L=args.L, coupling=coup, dom=dm, tl=args.time_limit, max_it=args.max_it)
-                rr = B.rec(P, rho, args.L if coup else None, name, lo0, up0, info, secs)
+                lo0, up0, info, secs = X.solve_both(P, rho, lb, ub, L=L_use, coupling=coup, dom=dm, tl=args.time_limit, max_it=args.max_it)
+                rr = B.rec(P, rho, L_use if coup else None, name, lo0, up0, info, secs)
+                rr["n_constraints"] = dict(lc_rows=int(2 * P["n_pairs"]), coupling_cuts=int(info["cuts"]), dominance_rows=int(len(dm[0])) if dm is not None else 0, vars=int(P["nV"] + P["Kc"]))
+                base_ = r["runs"].get(f"{rho}|baseline")
+                if lo0 is not None and base_ is not None and base_.get("lp_lo") is not None:
+                    rr["vs_baseline"] = dict(lo_change=lo0 - base_["lp_lo"], hi_change=up0 - base_["lp_hi"], never_wider=bool(lo0 >= base_["lp_lo"] - 1e-6 and up0 <= base_["lp_hi"] + 1e-6))
                 if lo0 is not None:
                     rr["box_tightening"] = dict(share_lb=float((lb > LO + 1e-9).mean()), share_ub=float((ub < HI - 1e-9).mean()))
                 r["runs"][key] = rr; r["elapsed_seconds"] = time.perf_counter() - tc; dump(d, out)
@@ -137,7 +188,9 @@ if __name__ == "__main__":
     ap.add_argument("--noise-sd", type=float, default=None, help="take the noise sd as KNOWN for calibration and reference boxes (when repeated logged pairs are too sparse to estimate it)")
     ap.add_argument("--clusterings", nargs="+", default=["kmeans", "agglomerative", "spectral"], choices=("kmeans", "agglomerative", "hierarchical", "spectral", "dgp"))
     ap.add_argument("--npts", type=int, default=5, help="eps grid points in [1, eps_max] (plot 04 used 5)")
-    ap.add_argument("--L", type=float, default=3.0); ap.add_argument("--z", type=float, default=3.5)
+    ap.add_argument("--L", default="3.0", help="Lipschitz constant for B3: a number, or 'auto' = estimated from logged data (estimate_L), frozen before any bound")
+    ap.add_argument("--z", type=float, default=3.5, help="margin multiplier for B7 logged lower bounds (and the B3_z variant)")
+    ap.add_argument("--ref-z", type=float, default=None, help="if set, ONE margin multiplier for every logged reference interval (B3 references and B5 endpoints); the separate B3_z variant is then skipped")
     ap.add_argument("--beliefs", nargs="*", default=None, help="subset of belief names to run (default all)")
     ap.add_argument("--time-limit", type=float, default=3600.0); ap.add_argument("--max-it", type=int, default=8)
     ap.add_argument("--model", default="cluster_level", choices=("cluster_level", "two_step"), help="reward model m_hat: cluster-level ridge (plots 03-10) or OffCEM's two-step f_hat = g_hat(x,c) + h_hat(x,a) (paper code)")
