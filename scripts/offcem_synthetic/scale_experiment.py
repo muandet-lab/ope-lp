@@ -108,7 +108,10 @@ def run(args):
                 if limits is not None:
                     Ma = np.clip(Ma, limits[0], limits[1])
                 oof[a_] = float(((W["y"] - Ma[W["uid"], W["act"]]) ** 2).mean())
-            alpha = min(oof, key=oof.get); r["ridge_alpha_cv"] = dict(oof_mse=oof, chosen=alpha)
+            if max(oof.values()) - min(oof.values()) < 1e-12:   # the centre ignores alpha (two_step): alpha then only sets the level ridge; take the strongest penalty rather than the first candidate
+                alpha = max(oof); r["ridge_alpha_cv"] = dict(oof_mse=oof, chosen=alpha, degenerate=True, note="centre does not depend on alpha; chosen for the level ridge")
+            else:
+                alpha = min(oof, key=oof.get); r["ridge_alpha_cv"] = dict(oof_mse=oof, chosen=alpha)
             print(f"[{method}] ridge alpha by out-of-fold MSE: {oof} -> {alpha}", flush=True)
         else:
             alpha = float(args.alpha)
