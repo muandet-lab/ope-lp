@@ -64,8 +64,12 @@ def sweep_plot(d, method, stem):
 
 def belief_items(r):
     z = r["beliefs_info"]["z"]; L = r["beliefs_info"]["L"]; rz = r["beliefs_info"].get("ref_z")
-    return [("plot-04 bar\n(closed form)", "closed"), ("baseline\n(μ merged)", "baseline"), (f"+ B3\nL = {L:.2f}" + (f"\n(z = {rz:g})" if rz else ""), "B3")] + ([] if rz else [(f"+ B3\nz = {z:g}", f"B3_z{z:g}")]) + [("+ B5\nrange", "B5_range"), ("+ B5\n5–95 %", "B5_q5"),
-            ("+ B7\nordering", "B7_ord"), (f"+ B7\n+ logged\n(z = {z:g})", f"B7_z{z:g}"), (f"+ B5 5–95 %\n+ B7 z = {z:g}", f"B5_q5+B7_z{z:g}"), (f"+ B3 z = {z:g}\n+ B5 5–95 %\n+ B7 z = {z:g}", f"B3z+B5_q5+B7_z{z:g}")] if not rz else [(f"+ B3 + B5 5–95 %\n+ B7 z = {z:g}", f"B3z+B5_q5+B7_z{z:g}")]
+    items = [("plot-04 bar\n(closed form)", "closed"), ("baseline\n(μ merged)", "baseline"), (f"+ B3\nL = {L:.2f}" + (f"\n(z = {rz:g})" if rz else ""), "B3")]
+    if not rz:
+        items.append((f"+ B3\nz = {z:g}", f"B3_z{z:g}"))
+    items += [("+ B5\nrange", "B5_range"), ("+ B5\n5–95 %", "B5_q5"), ("+ B7\nordering", "B7_ord"), (f"+ B7\n+ logged\n(z = {z:g})", f"B7_z{z:g}"), (f"+ B5 5–95 %\n+ B7 z = {z:g}", f"B5_q5+B7_z{z:g}")]
+    items.append((f"+ B3 + B5 5–95 %\n+ B7 z = {z:g}" if rz else f"+ B3 z = {z:g}\n+ B5 5–95 %\n+ B7 z = {z:g}", f"B3z+B5_q5+B7_z{z:g}"))
+    return items
 
 
 def belief_axes(ax, r, rho, items, cols, allv):
