@@ -81,17 +81,17 @@ def lp_only_sweep_plot(d, methods, stem):
                 ax.text(k, r["V0_true"], "infeasible", rotation=90, ha="center", va="center", fontsize=9, color=c); continue
             lo, hi = x["lp_lo"], x["lp_hi"]
             ax.plot([k, k], [lo, hi], color=c, lw=4); ax.plot([k, k], [lo, hi], ls="", marker="o", ms=9, color=c)
-            ax.text(k, lo - 0.3, f"w {hi - lo:.1f}", ha="center", va="top", fontsize=9.5, color=c); vals += [lo, hi]
+            ax.annotate(f"w {hi - lo:.2f}" if hi - lo < 2 else f"w {hi - lo:.1f}", (k, lo), xytext=(0, -9), textcoords="offset points", ha="center", va="top", fontsize=9.5, color=c); vals += [lo, hi]
         ax.axhline(r["V0_true"], color="black", ls=(0, (1, 1.6)), lw=2); vals.append(r["V0_true"])
         ax.set_xticks(range(len(grid))); ax.set_xticklabels([f"ε = {g:.2f}" + ("\n(ε_max)" if k == len(grid) - 1 else "") for k, g in enumerate(grid)], fontsize=10.5)
         ax.set_xlim(-0.6, len(grid) - 0.4); ax.grid(axis="y", color="#ddd", lw=0.6)
-        ax.set_title(f"{NAMES[m]} (C = {r['n_clusters']}, ARI vs DGP {r['ari_vs_dgp']:.2f})\nε_max = {r['eps_max']:.2f}, unsupported mass {r['lp_mass']:.2f}", fontsize=12)
+        ax.set_title(f"{NAMES.get(m, m)} (C = {r['n_clusters']}, ARI vs {'paper random' if w.get('dataset') else 'DGP'} {r['ari_vs_dgp']:.2f})\nε_max = {r['eps_max']:.2f}, unsupported mass {r['lp_mass']:.2f}", fontsize=12)
     pad = 0.08 * (max(vals) - min(vals)); axes[0].set_ylim(min(vals) - pad, max(vals) + pad); axes[0].set_ylabel("Unsupported part V⁰ (policy value on excluded actions)", fontsize=12)
     r0 = d["clusterings"][methods[0]]
     hs = [Line2D([0], [0], color="black", ls=(0, (1, 1.6)), lw=2, label=f"True unsupported part V⁰ = {r0['V0_true']:.2f}"), Line2D([0], [0], color="gray", lw=4, marker="o", ms=9, label="LP bounds on V⁰ (min / max of the LP)")]
     fig.legend(handles=hs, loc="lower center", ncol=2, frameon=False, fontsize=11, bbox_to_anchor=(0.5, 0.10))
-    fig.suptitle(f"LP bounds on the unsupported part only — {w['K']} actions, {w['n']} rounds, {w['n_users']} users, {w['dgp_clusters']} DGP clusters, seed {w['seed']}, λ = ∞, original exclusions", fontsize=13, y=0.985)
-    note = (f"Beliefs: outcome range [-30, 30]; relaxed local correctness |μ − m̂ − b| ≤ ε around the cluster-level model m̂ ({'OffCEM two-step f̂' if w.get('model') == 'two_step' else 'ridge'}, cross-fitted by {w.get('folds', 'round')}); level band |b − ĝ| ≤ η with η = ε. "
+    fig.suptitle(f"LP bounds on the unsupported part only — {w['K']} actions, {w['n']} rounds, {w['n_users']} users, seed {w['seed']}; {world_line(w)}", fontsize=13, y=0.985)
+    note = (f"Beliefs: outcome range {w.get('limits', [-30, 30])}; relaxed local correctness |μ − m̂ − b| ≤ ε around the cluster-level model m̂ ({'OffCEM two-step f̂' if w.get('model') == 'two_step' else 'ridge'}, cross-fitted by {w.get('folds', 'round')}); level band |b − ĝ| ≤ η with η = ε. "
             "ε_max = 2·τ̂ from within-(user, cluster) logged contrasts, logged data only. No supported-region estimate and no sampling-error widening enter these bars: they are the LP optimum values. Displayed ε = ρ = stored ε_LC / 2.")
     fig.text(0.012, 0.006, "\n".join(textwrap.fill(q, 190) for q in note.split("\n")), fontsize=8.5, color="#555", va="bottom")
     fig.subplots_adjust(left=0.06, right=0.99, top=0.86, bottom=0.26, wspace=0.06)
@@ -124,7 +124,7 @@ def belief_axes(ax, r, rho, items, cols, allv):
             allv += [lo, hi]; lows.append(lo)
             if sp == "dr":
                 wdr = hi - lo
-        ax.text(k, min(lows) - 0.4, f"w {wdr:.1f}", ha="center", va="top", fontsize=9, color=c)
+        ax.annotate(f"w {wdr:.2f}" if wdr < 2 else f"w {wdr:.1f}", (k, min(lows)), xytext=(0, -9), textcoords="offset points", ha="center", va="top", fontsize=9, color=c)
     lines(ax, r)
     ax.set_xticks(range(len(items))); ax.set_xticklabels([t[0] for t in items], fontsize=8); ax.set_xlim(-0.6, len(items) - 0.4)
 
@@ -169,7 +169,7 @@ def belief_plot_all(d, methods, stem):
     r0 = d["clusterings"][methods[0]]
     fig.legend(handles=legend_handles(r0)[3:], loc="lower center", ncol=5, frameon=False, fontsize=10.5, bbox_to_anchor=(0.5, 0.012))
     w = d["world"]
-    fig.suptitle(f"Beliefs at ε_max and one level below, per estimation clustering — {w['K']} actions, {w['n']} rounds, {w['n_users']} users, {w['dgp_clusters']} DGP clusters, seed {w['seed']}, λ = ∞", fontsize=13.5, y=0.995)
+    fig.suptitle(f"Beliefs at ε_max and one level below, per estimation clustering — {w['K']} actions, {w['n']} rounds, {w['n_users']} users, seed {w['seed']}; {world_line(w)}", fontsize=13.5, y=0.995)
     fig.subplots_adjust(left=0.045, right=0.99, top=0.955, bottom=0.10, wspace=0.05, hspace=0.5)
     fig.savefig(stem + ".png", dpi=100); fig.savefig(stem + ".pdf"); plt.close(fig)
 
