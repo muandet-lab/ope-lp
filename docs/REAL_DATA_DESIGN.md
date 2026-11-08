@@ -101,3 +101,32 @@ Reading: under the paper's real-data protocol the logs contain essentially no ob
 them; the paper's own OffCEM point estimate must sit near 0.3 against V ≈ 0.68 (consistent with its reported normalised MSE of 0.2–0.3 on Figure 4). The LP makes this visible as a calibrated ε
 far below the deviation that the truth requires, but from the logs alone the violation is invisible (favourites are never logged). A logger with a lower β (more exploration of positives)
 is the variable that would let the logs carry the information; that is a departure from the paper's β = 30.
+
+## 8. EUR-Lex with an informed logger (2026-11-08, night): `--logger true_q --beta 12`
+Lowering β of the paper's logger does not help: even uniform logging (β = 0) shows a true positive in 0.1 % of rounds, because a document has ≈ 5 positive labels out of 3,956. The paper's
+logger at β = 30 is peaked on labels its ridge predicts, which are mostly not the true positives. The synthetic arm's logger is a softmax over the TRUE q; the matching real-data variant is
+`--logger true_q`: π0 = softmax(β q). β scan (share of logged rounds on a positive / users whose favourite was ever logged / favourite in the LP at λ = 10): β = 8: 4 % / 22 % / all;
+β = 10: 7 % / 40 % / all; **β = 12: 16 % / 66 % / all**; β = 15: 38 % / 93 % / 21 %. β = 12 keeps the favourite in the LP for every user while the logs contain it for two thirds of them.
+
+Run: `scale_experiment.py --real eurlex --logger true_q --beta 12 --n 8000 --users 300 --C 100 --lam 10 --folds user --alpha cv --eps-min 0.02 --eta-se-z 2 --clusterings random kmeans agglomerative spectral --beliefs B5_range B5_q5 B7_ord B7_z3.5 B5_q5+B7_z3.5 --tag eurlex_trueq_b12`
+(one minute per clustering locally). V = 0.674, V⁺ = 0.029 (λ = 10 sends 0.90 of the mass — exactly each user's favourite, 300 LP variables — to the LP), V⁰ = 0.646.
+
+| clustering | ε_max | LP at ε_max | DR bar | contains V | LC violated (mass) | true vector feasible |
+|---|---|---|---|---|---|---|
+| paper random (100) | 0.19 | [0.06, 0.75] | [0.08, 0.80] | yes | 79 % | no (40 of 300 cells) |
+| paper random, one level below (0.14) | | [0.12, 0.68] | [0.13, 0.73] | yes | 88 % | no (129 cells) |
+| K-means on label co-occurrence | 0.00 → grid {0.02} | [0.24, 0.54] | [0.25, 0.59] | **no** | 98 % | no |
+| agglomerative (co-occurrence) | 0.00 | [0.24, 0.55] | [0.26, 0.59] | **no** | 97 % | no |
+| spectral (co-occurrence) | 0.00 | [0.24, 0.54] | [0.25, 0.59] | **no** | 98 % | no |
+
+Reading:
+- The random-cluster bars contain V, but the truth checks show it is coverage by slack, not validity: LC is violated on 79–88 % of the LP mass and the true mean vector is infeasible; the bars
+  reach V only because the per-cell level band (η_cell = max(ρ, 2 SE), p90 0.37, max 1.8) is wide where the level ridge is uncertain.
+- The co-occurrence clusterings calibrate to ε_max = 0: two logged actions of a user in the same cluster are almost always both negatives, so the contrasts are pure noise. The LP then has
+  the tightest windows and misses V by 0.08. Here a "better" clustering (labels that co-occur) does not make the favourite locally correct: its cluster still holds ≈ 40 labels of which the
+  user has 1–2 positives, so the cluster centre is ≈ 0.3 and the favourite sits 0.43 above it — for every clustering of this size.
+- B5 and B7 add nothing: with one LP variable per user there are no ordering rows, and the Bernoulli reference bound (sd 0.5, z = 3.5) only binds with ≥ 12 repeats of a pair.
+- The closed-form "plot-04" bar uses η = ρ; the merged baseline uses the per-cell band, hence the small difference between the first two bars.
+Structural conclusion for extreme multi-label data: the target's favourite label is, by construction, the rare positive inside any cluster of tens of labels, so a cluster-level centre is off
+by ≈ 0.4 on it and the logged contrasts (overwhelmingly negative–negative) cannot see that. Relaxed local correctness around a cluster centre is the wrong belief family for this data; what is
+needed is a belief about the favourite itself (B7-type) with enough logged evidence per user, i.e. repeated observations of the favourite, which only an informed logger provides.
