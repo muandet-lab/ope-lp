@@ -211,3 +211,31 @@ Conclusion: with the paper's two-step model as the per-pair centre, the beliefs 
 1.5–2× wider than with the cluster-level ridge, and every informative belief is infeasible. The paper's ĥ is unlearnable at this density (≈ 4 pairwise rows per action head; the
 paper's own default is sparser) and is noise with sd ≈ 3; a point estimator averages that noise away, a per-pair constraint set cannot. The usable centre is ĝ alone (the ridge).
 The logged-data L̂ = 2.97 agrees with the earlier feasibility floor of 3 and with the oracle p95 slope of 2.32, so L = 3 was not unreasonable, but it is now estimated rather than chosen.
+
+## 11. Scale arm (2): OffCEM two-step centre g+h for dgp / kmeans / agglomerative / spectral (VM, 2026-11-08; tag n8000_twostep)
+
+Same world as section 9 (1000 actions, 8000 rounds, 200 users, 50 DGP clusters, user folds, lambda = inf), centre = paper's two-step model f = g + h (pairwise net, per-action heads, cross-fitted by user), level-ridge alpha = 1 (VM commit 444b249; B3 not in that launcher). V = 7.48, V+ = 3.77, V0 = 3.71.
+
+| Clustering | eps_max (ridge centre, section 9) | eps_max (two-step) | Baseline LP on V0 at eps_max | DR bar | Contains V | Beliefs (B5, B7) |
+|---|---|---|---|---|---|---|
+| dgp | 0 (see section 12) | 5.35 | [-3.1, 7.5] | [-1.9, 10.4] | yes (width 12) | all infeasible |
+| kmeans | 4.73 | 8.46 | [-7.2, 9.5] | [-6.4, 14.2] | yes (width 21) | all infeasible |
+| agglomerative | 4.43 | 7.56 | [-6.7, 8.3] | [-7.0, 12.2] | yes (width 19) | all infeasible |
+| spectral | 4.70 | 8.08 | infeasible at every grid point | - | - | all infeasible |
+
+Truth checks at eps_max: LC around g+h violated on 38-45% of LP mass; true vector infeasible in 113k-168k of 400k cells (one level below: 48-53%, 221k-273k cells). Lowest grid points (eps 1, ~2.7, for kmeans/spectral also ~4.6) infeasible for the baseline.
+
+Why (diagnostic, kmeans labels, cross-fitted by user, this machine):
+
+| Centre | RMSE vs true q (all / unsupported) | share |M| > 15 | corr(M, q) on unsupported | favourite: mean M vs true 8.77 |
+|---|---|---|---|---|
+| cluster ridge | 3.72 / 3.72 | 0 | 0.34 | 2.09 |
+| two-step g+h | 7.68 / 7.68 | 5.5% | 0.17 | 3.36 |
+
+At 8 logged rounds per action (8000 rounds / 1000 actions) the per-action heads of h are not learnable; the two-step centre is twice as far from the truth as the cluster ridge and 5.5% of its predictions sit beyond +-15 (clipped at +-30). Consequences: (i) within-cluster logged contrasts around a noisier centre are larger, so eps_max nearly doubles; (ii) the LC box around an extreme centre lies outside the range of the logged references of the same cluster, so B5 (cluster range) and B7 (logged lower bounds, z = 3.5, sigma 3.19) have no intersection with it -> infeasible; (iii) the bars that remain are 12-21 wide and contain V only by width. The two-step centre does slightly better on the favourite (3.36 vs 2.09, truth 8.77) but not nearly enough.
+
+Contrast with EUR-Lex (REAL_DATA_DESIGN section 9): there the two-step centre repaired the belief, because 3956 label heads trained on 8000 rounds with strong label structure learn the favourite's lift. On the synthetic world the per-action signal is sigma_h-sized noise around a cluster effect, and 8 observations per action cannot recover it. Conclusion for the story: the LP inherits the quality of its centre; the cluster-level ridge is the right centre for the synthetic DGP, the two-step is the right centre for EUR-Lex, and the truth checks / infeasibility at low eps tell the two cases apart from the data alone.
+
+## 12. Scale arm (1): DGP clusters, ridge centre (VM, relaunched 2026-11-09; tag n8000_dgp)
+
+First launch (code at 444b249) stopped: eps_max = 0 on the true clusters (tau2_raw = -0.53: within-cluster logged contrasts at the noise level, as the DGP intends) and the old driver aborted on an empty grid. Relaunched after pull with `--eps-grid 1 1.9 2.7 3.6 4.4` (the kmeans grid of section 9) so the LP on the true clusters is reported at the tolerances the learned clusterings needed; eps_max = 0 is recorded in the JSON. Results pending copy-back.
