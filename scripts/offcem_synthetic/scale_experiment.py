@@ -46,7 +46,7 @@ def estimate_L(P, q=0.95, min_pairs=50):
     """Logged-data Lipschitz constant: over all pairs of users (u, v) that both logged the same action a, the noise-corrected slope
     s_uv,a^2 = max(0, (ybar_ua - ybar_va)^2 - sigma_hat^2 (1/n_ua + 1/n_va)) / d_uv^2 ; L_hat = q-quantile of s (default 95th). Uses only logged means, counts, sigma_hat and
     standardised-context distances. No truth. Reports the pair count; fewer than min_pairs -> status 'insufficient' (L_hat still returned for transparency)."""
-    Rlo, Rhi = P["ref_log"]; mean = (Rlo + Rhi) / 2; n = P["ref_n"]; D = P["D"]; s2 = P["sigma"] ** 2
+    Rlo, Rhi = P["ref_log"]; mean = P["ref_mean_raw"] if "ref_mean_raw" in P else (Rlo + Rhi) / 2; n = P["ref_n"]; D = P["D"]; s2 = P["sigma"] ** 2
     slopes = []
     for a in range(P["K"]):
         us = np.flatnonzero(n[:, a] > 0)
@@ -171,6 +171,7 @@ def run(args):
         with np.errstate(invalid="ignore", divide="ignore"):
             hz = args.z * P["sigma"] / np.sqrt(n)
         P["ref_log_z"] = (np.where(n > 0, mean - hz, np.nan), np.where(n > 0, mean + hz, np.nan))
+        P["ref_mean_raw"] = (P["ref_log"][0] + P["ref_log"][1]) / 2        # logged means (before any interval replacement) for the L estimate
         if args.binomial_refs:                            # Bernoulli outcomes: exact Clopper-Pearson intervals at the two-sided level implied by z replace mean +- z sigma / sqrt(n) everywhere a logged reference is used
             from scipy.stats import beta as _beta, norm as _norm
             n_ = P["ref_n"]; mean_ = (P["ref_log"][0] + P["ref_log"][1]) / 2; s_ = np.rint(np.where(n_ > 0, mean_ * n_, 0.0))
@@ -182,6 +183,12 @@ def run(args):
             P["ref_log"] = cp(1.96); P["ref_log_z"] = cp(args.z); P["ref_lbub_z"] = cp(args.z)
             r["binomial_refs"] = dict(level_default=1.96, level_z=args.z, pairs_logged=int((n_ > 0).sum()), median_n=float(np.median(n_[n_ > 0])))
             print(f"[{method}] logged references: Clopper-Pearson (two-sided z = 1.96 default / z = {args.z:g}); {r['binomial_refs']}", flush=True)
+        if args.b7_pool is not None:                      # pooled B7 anchor (dominance => favourite >= logger's average reward for the user): Hoeffding on the user's logged rewards, range [LO, HI]
+            invr = P["inv"][Wp["uid"]]; cnt = np.bincount(invr, minlength=P["nu"]); ysum = np.bincount(invr, weights=np.asarray(Wp["y"], float), minlength=P["nu"])
+            ybar = ysum / np.maximum(cnt, 1); lbpool = ybar - (HI - LO) * np.sqrt(np.log(1 / args.b7_pool) / (2 * np.maximum(cnt, 1)))
+            P["b7_pool_lb"] = np.where(cnt > 0, lbpool, LO)
+            r["b7_pool"] = dict(delta=args.b7_pool, mean_lb=float(P["b7_pool_lb"].mean()), users_positive=int((P["b7_pool_lb"] > LO).sum()), rounds_per_user_median=float(np.median(cnt)))
+            print(f"[{method}] B7 pooled anchor (Hoeffding, delta {args.b7_pool}): {r['b7_pool']}", flush=True)
         Linfo = estimate_L(P) if args.L == "auto" else dict(status="given", L_hat=float(args.L))
         L_use = float(Linfo["L_hat"]); r["L_calibration"] = Linfo
         print(f"[{method}] L: {Linfo}", flush=True)
@@ -196,7 +203,7 @@ def run(args):
                                  b7={k: dict(v[3], true_violation_share_rows=float((qv[v[0][0]] > qv[v[0][1]] + 1e-9).mean()),
                                              true_outside_mass=float((w * ((qv < v[1] - 1e-9) | (qv > v[2] + 1e-9))).sum() / w.sum())) for k, v in b7.items()})
         for rho in rhos:
-            P["eta"] = rho if args.eta_se_z is None else np.maximum(rho, args.eta_se_z * P["gh_se"])   # per-cell band: at least rho, at least z x the level ridge's own SE
+            P["eta"] = (float(args.eta_fixed) if args.eta_fixed is not None else rho) if args.eta_se_z is None else np.maximum(rho, args.eta_se_z * P["gh_se"])   # per-cell band: at least rho, at least z x the level ridge's own SE
             if args.eta_se_z is not None:
                 r.setdefault("eta_cell", {})[str(rho)] = dict(z=args.eta_se_z, median=float(np.median(P["eta"])), p90=float(np.percentile(P["eta"], 90)), max=float(P["eta"].max()), share_above_rho=float((P["eta"] > rho + 1e-12).mean()))
             lb5r, ub5r, _ = b5["range"]; lb5q, ub5q, _ = b5["q5"]
@@ -261,6 +268,8 @@ if __name__ == "__main__":
     ap.add_argument("--time-limit", type=float, default=3600.0); ap.add_argument("--max-it", type=int, default=8)
     ap.add_argument("--h-shrink", default=None, help="two_step only: weight s on the pairwise correction h_hat (f = g_hat_s + s h_hat, g refit on y - s h); a number, or 'cv' = s in {0,.25,.5,.75,1} by out-of-fold MSE on the logged rounds")
     ap.add_argument("--g-model", default="mlp", choices=("mlp", "ridge"), help="two_step only: first stage g_hat(x,c): paper's MLP (OBP RegressionModel) or one ridge per cluster on the user context (alpha = --alpha)")
+    ap.add_argument("--b7-pool", type=float, default=None, help="B7 logged variant: add the pooled anchor mu(u,a*) >= Hoeffding lower bound (level delta) of the user's mean logged reward (valid under favourite dominance)")
+    ap.add_argument("--eta-fixed", type=float, default=None, help="hold the level band eta at this value while rho sweeps (default eta = rho)")
     ap.add_argument("--binomial-refs", action="store_true", help="Bernoulli outcomes: Clopper-Pearson intervals (level from z) for every logged reference (B3 refs, B5 endpoints, B7 bounds) instead of mean +- z sigma / sqrt(n)")
     ap.add_argument("--clip-model", default=None, choices=(None, "cluster_logged", "outcome_cell"), help="option (4): cluster_logged = clip m_hat(u,a) to [min, max] of the logged rewards of a's cluster; outcome_cell = shift each cell's level so that the LC centre m_hat + g_hat lies in the outcome range")
     ap.add_argument("--soft-t", type=float, nargs="*", default=None, help="option (5): when an extra belief is infeasible, relax every extra-belief constraint by t (reference bounds +-t, coupling L d + t, dominance <= t) for t in this ascending list and keep the smallest feasible t")

@@ -90,6 +90,8 @@ def b7_rows(P, z=None):
             if z is not None and len(logged):
                 lbz = P["ref_lbub_z"][0][u, logged] if "ref_lbub_z" in P else mean[u, logged] - z * P["sigma"] / np.sqrt(n_ref[u, logged])
                 lb_x[vs] = max(lb_x[vs], lbz.max())
+            if z is not None and "b7_pool_lb" in P:
+                lb_x[vs] = max(lb_x[vs], float(P["b7_pool_lb"][u]))
         elif z is not None and not np.isnan(Rhi[u, a_s]):
             n_star_logged_only += 1
             ubz = P["ref_lbub_z"][1][u, a_s] if "ref_lbub_z" in P else mean[u, a_s] + z * P["sigma"] / np.sqrt(n_ref[u, a_s])
