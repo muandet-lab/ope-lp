@@ -211,10 +211,14 @@ def fit_cluster_level_units(W, kind="ridge", folds=5, seed=12345, alpha=1.0, deg
     return Mc
 
 
-def fit_two_step_units(W, folds=5, seed=12345, user_folds=False, epochs=30):
+def fit_two_step_units(W, folds=5, seed=12345, user_folds=False, epochs=30, shrink=None, g_model="mlp", alpha=1.0):
     """OffCEM's two-step reward model f_hat(x, a) = g_hat(x, c_a) + h_hat(x, a) (Saito et al. 2023, Sec. 3.2), as implemented in the paper's code (ope.train_pairwise_model +
     OBP RegressionModel MLP(50,50,50) on the residual with the cluster as the action), cross-fitted by unit (or by user). Pairwise data: observed action pairs of the same user in the
-    same (estimation) cluster; reward per (user, action) = mean logged y. Returns f_hat as (units x K)."""
+    same (estimation) cluster; reward per (user, action) = mean logged y. Returns f_hat as (units x K).
+    shrink: weight s on the pairwise correction, f_hat_s = g_hat_s + s * h_hat with g_hat_s refit on y - s * h_hat (None or 1 = paper's model; 0 = cluster-level MLP only;
+    "cv" = s from {0, .25, .5, .75, 1} by out-of-fold squared error on the logged rounds). The chosen s and the OOF table are stored in W["two_step_info"].
+    g_model: first stage g_hat(x, c) on the residual y - s h_hat: "mlp" = paper's OBP RegressionModel MLP(50,50,50) with the cluster as the action; "ridge" = one ridge (penalty alpha) per cluster
+    on the user context (the cluster-level ridge of the plots; s = 0 then reproduces the cluster_level model up to fold assignment)."""
     import torch
     import ope as OPE
     from obp.ope import RegressionModel
@@ -231,7 +235,8 @@ def fit_two_step_units(W, folds=5, seed=12345, user_folds=False, epochs=30):
         foldu = np.random.RandomState(seed).permutation(nU) % folds
     fold_rows = foldu[uid]
     cluster_idx_mat = np.tile(cl, (nu, 1))
-    M = np.zeros((nU, K))
+    grid = [0.0, 0.25, 0.5, 0.75, 1.0] if shrink == "cv" else [1.0 if shrink is None else float(shrink)]
+    Ms = {s_: np.zeros((nU, K)) for s_ in grid}; sse = {s_: 0.0 for s_ in grid}; n_oof = 0
     for f in range(folds):
         tr, te = np.flatnonzero(fold_rows != f), np.flatnonzero(foldu == f)
         if not len(te):
@@ -244,22 +249,36 @@ def fit_two_step_units(W, folds=5, seed=12345, user_folds=False, epochs=30):
                   context=Xu[inv_r[tr]], user_idx=inv_r[tr], action=act[tr], reward=y[tr].astype(float))
         torch.manual_seed(seed + f)
         h_hat = OPE.train_pairwise_model(bd, cluster_idx_mat, C, prediction_context=Xu, num_epochs=epochs, random_state=seed + f)   # (nu x K)
-        resid = y[tr] - h_hat[inv_r[tr], act[tr]]
-        reg = RegressionModel(n_actions=C, action_context=np.eye(C), base_model=MLP(hidden_layer_sizes=(50, 50, 50), random_state=seed + f))
-        reg.fit(context=Xu[inv_r[tr]], action=cl[act[tr]], reward=resid)
-        g_hat = reg.predict(context=Xu)[:, :, 0]                                                                                        # (nu x C)
-        f_hat = h_hat + g_hat[:, cl]
-        M[te] = f_hat[unit_user[te]]
-    return M
+        te_rows = np.flatnonzero(fold_rows == f); n_oof += len(te_rows)
+        for s_ in grid:
+            resid = y[tr] - s_ * h_hat[inv_r[tr], act[tr]]
+            if g_model == "ridge":
+                from sklearn.linear_model import Ridge
+                Xtr, ctr = Xu[inv_r[tr]], cl[act[tr]]; g_hat = np.zeros((nu, C))
+                for c in range(C):
+                    m = ctr == c
+                    g_hat[:, c] = Ridge(alpha=alpha).fit(Xtr[m], resid[m]).predict(Xu) if m.sum() >= 2 else (resid[m].mean() if m.any() else 0.0)
+            else:
+                reg = RegressionModel(n_actions=C, action_context=np.eye(C), base_model=MLP(hidden_layer_sizes=(50, 50, 50), random_state=seed + f))
+                reg.fit(context=Xu[inv_r[tr]], action=cl[act[tr]], reward=resid)
+                g_hat = reg.predict(context=Xu)[:, :, 0]                                                                                # (nu x C)
+            f_hat = s_ * h_hat + g_hat[:, cl]
+            Ms[s_][te] = f_hat[unit_user[te]]
+            if len(te_rows):
+                sse[s_] += float(((y[te_rows] - f_hat[inv_r[te_rows], act[te_rows]]) ** 2).sum())
+    oof = {s_: sse[s_] / max(n_oof, 1) for s_ in grid}
+    s_best = min(oof, key=oof.get) if shrink == "cv" else grid[0]
+    W["two_step_info"] = dict(shrink=shrink, s=s_best, g_model=g_model, oof_mse={str(k): v for k, v in oof.items()})
+    return Ms[s_best]
 
 
-def get_model(W, name, cluster_model="ridge", folds=5, alpha=1.0, degree=1, model_noise=2.0, user_folds=False):
+def get_model(W, name, cluster_model="ridge", folds=5, alpha=1.0, degree=1, model_noise=2.0, user_folds=False, shrink=None, g_model="mlp"):
     q, cl, C, seed = W["q_unit"], W["cl"], W["C"], W["cfg"].seed
     rng = np.random.RandomState(seed + 1)
     if name == "cluster_level":
         return fit_cluster_level_units(W, cluster_model, folds, seed, alpha, degree, user_folds)[:, cl]
     if name == "two_step":
-        return fit_two_step_units(W, folds, seed, user_folds)
+        return fit_two_step_units(W, folds, seed, user_folds, shrink=shrink, g_model=g_model, alpha=alpha)
     if name == "oracle":
         return q.copy()
     if name == "oracle_shift":

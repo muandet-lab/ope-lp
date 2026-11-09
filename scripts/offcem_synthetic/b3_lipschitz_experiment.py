@@ -46,7 +46,7 @@ LO, HI = -30.0, 30.0
 KNN = 3
 
 
-def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level", lam=None, limits=None, calibrate=None, sigma_ref=None, alpha=1.0, clip=None):
+def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level", lam=None, limits=None, calibrate=None, sigma_ref=None, alpha=1.0, clip=None, shrink=None, g_model="mlp"):
     """W = None: the small world of plots 03-10 (SPLIT_WORLD, original exclusions) with K-means labels. Otherwise a prebuilt world and an action-label vector (any clustering).
     lam: overlap threshold defining the LP region (None = pi0 == 0 only). limits: outcome range (default [-30, 30]). calibrate: eps_max calibration function (default eps_sweep_dgp.calibrate_user_cells).
     sigma_ref: noise sd used for logged reference intervals (default: the calibration's sigma_noise)."""
@@ -55,7 +55,7 @@ def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level", lam=Non
         W = G.make_world(G.WorldCfg(**{**F.SPLIT_WORLD, "seed": seed, "exclusion": "round_random"}))
     km = KMeans(n_clusters=W["C"], n_init=10, random_state=0).fit_predict(np.asarray(W["action_x"], float)).astype(int) if lab is None else np.asarray(lab).astype(int)
     Wp = {**W, "cl": km, "C": int(km.max()) + 1}
-    M = G.get_model(Wp, model, "ridge", 5, alpha, 1, user_folds=user_folds)
+    M = G.get_model(Wp, model, "ridge", 5, alpha, 1, user_folds=user_folds, shrink=shrink, g_model=g_model)
     if limits is not None:
         M = np.clip(M, lo_, hi_)                        # the centre is a prediction of a mean in the outcome range (e.g. a probability)
     clip_info = None

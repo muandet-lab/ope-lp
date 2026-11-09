@@ -115,7 +115,9 @@ def run(args):
             print(f"[{method}] ridge alpha by out-of-fold MSE: {oof} -> {alpha}", flush=True)
         else:
             alpha = float(args.alpha)
-        P = B.prep(args.seed, user_folds=(args.folds == "user"), W=W, lab=lab, model=args.model, lam=lam, limits=limits, calibrate=calibrate, sigma_ref=sigma_ref, alpha=alpha, clip=args.clip_model)
+        P = B.prep(args.seed, user_folds=(args.folds == "user"), W=W, lab=lab, model=args.model, lam=lam, limits=limits, calibrate=calibrate, sigma_ref=sigma_ref, alpha=alpha, clip=args.clip_model, shrink=(None if args.h_shrink is None else ("cv" if args.h_shrink == "cv" else float(args.h_shrink))), g_model=args.g_model)
+        if P["W"].get("two_step_info"):
+            r["two_step_info"] = P["W"]["two_step_info"]; print(f"[{method}] two-step correction weight s: {P['W']['two_step_info']}", flush=True)
         if P.get("clip_info"):
             r["clip_info"] = P["clip_info"]; print(f"[{method}] centre clipped to the cluster's logged reward range: {P['clip_info']}", flush=True)
         Wp, M = P["W"], P["M"]; LO, HI = P["LO"], P["HI"]
@@ -237,6 +239,8 @@ if __name__ == "__main__":
     ap.add_argument("--ref-z", type=float, default=None, help="if set, ONE margin multiplier for every logged reference interval (B3 references and B5 endpoints); the separate B3_z variant is then skipped")
     ap.add_argument("--beliefs", nargs="*", default=None, help="subset of belief names to run (default all)")
     ap.add_argument("--time-limit", type=float, default=3600.0); ap.add_argument("--max-it", type=int, default=8)
+    ap.add_argument("--h-shrink", default=None, help="two_step only: weight s on the pairwise correction h_hat (f = g_hat_s + s h_hat, g refit on y - s h); a number, or 'cv' = s in {0,.25,.5,.75,1} by out-of-fold MSE on the logged rounds")
+    ap.add_argument("--g-model", default="mlp", choices=("mlp", "ridge"), help="two_step only: first stage g_hat(x,c): paper's MLP (OBP RegressionModel) or one ridge per cluster on the user context (alpha = --alpha)")
     ap.add_argument("--clip-model", default=None, choices=(None, "cluster_logged"), help="option (4): clip the centre m_hat(u,a) to [min, max] of the logged rewards of a's cluster (data only)")
     ap.add_argument("--soft-t", type=float, nargs="*", default=None, help="option (5): when an extra belief is infeasible, relax every extra-belief constraint by t (reference bounds +-t, coupling L d + t, dominance <= t) for t in this ascending list and keep the smallest feasible t")
     ap.add_argument("--model", default="cluster_level", choices=("cluster_level", "two_step"), help="reward model m_hat: cluster-level ridge (plots 03-10) or OffCEM's two-step f_hat = g_hat(x,c) + h_hat(x,a) (paper code)")
