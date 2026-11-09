@@ -21,10 +21,12 @@ for method in a.clusterings:
     rho = P["cal"]["eps_max"]; eta = rho; nV = P["nV"]; mp, gh = P["mp"], P["gh"]
     coo = P["A_base"].tocoo(); n_pairs = P["n_pairs"]
     sel = (coo.row < n_pairs) & (coo.col < nV); v_of = np.zeros(n_pairs, int); v_of[coo.row[sel]] = coo.col[sel]     # LP row r (first block) -> its variable
+    selc = (coo.row < n_pairs) & (coo.col >= nV); c_of = np.zeros(n_pairs, int); c_of[coo.row[selc]] = coo.col[selc] - nV   # -> its cell (level g_hat is per cell)
+    crow = mp + gh[c_of]                                                                                     # LC centre of each row: m_hat(pair) + g_hat(cell)
     lo_w = np.full(nV, -np.inf); hi_w = np.full(nV, np.inf)
-    np.maximum.at(lo_w, v_of, mp + gh - rho - eta); np.minimum.at(hi_w, v_of, mp + gh + rho + eta)          # intersection over the variable's rows (one per logged-round cell)
+    np.maximum.at(lo_w, v_of, crow - rho - eta); np.minimum.at(hi_w, v_of, crow + rho + eta)                # intersection over the variable's rows (one per logged-round cell)
     lo_w = np.maximum(lo_w, P["LO"]); hi_w = np.minimum(hi_w, P["HI"])
-    csum = np.bincount(v_of, weights=mp + gh, minlength=nV); ccnt = np.bincount(v_of, minlength=nV); centre = csum / np.maximum(ccnt, 1)   # mean LC centre per variable
+    csum = np.bincount(v_of, weights=crow, minlength=nV); ccnt = np.bincount(v_of, minlength=nV); centre = csum / np.maximum(ccnt, 1)   # mean LC centre per variable
     qv = P["qu"][P["v_user"], P["v_act"]]
     (va, vs), lb7, ub7, info = X.b7_rows(P, a.z)
     print(f"\n=== {method}: eps_max = {rho:.2f} (rho = eta), LP vars {nV}, dominance rows {len(va)}, users with favourite as LP variable {info['users_star_is_variable']}", flush=True)
