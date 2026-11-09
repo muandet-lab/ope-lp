@@ -19,11 +19,12 @@ for method in a.clusterings:
     lab = SE.labels(W, method, a.seed)
     P = B.prep(a.seed, user_folds=True, W=W, lab=lab, model="two_step", lam=a.lam, clip="cluster_logged"); P["gh_cell"] = P["gh"]
     rho = P["cal"]["eps_max"]; eta = rho; nV = P["nV"]; mp, gh = P["mp"], P["gh"]
-    A = P["A_base"].tocsr(); n_pairs = P["n_pairs"]; idx = A[:n_pairs].indices.reshape(n_pairs, 2); v_of = idx[:, 0]
+    coo = P["A_base"].tocoo(); n_pairs = P["n_pairs"]
+    sel = (coo.row < n_pairs) & (coo.col < nV); v_of = np.zeros(n_pairs, int); v_of[coo.row[sel]] = coo.col[sel]     # LP row r (first block) -> its variable
     lo_w = np.full(nV, -np.inf); hi_w = np.full(nV, np.inf)
-    np.maximum.at(lo_w, v_of, mp + gh - rho - eta); np.minimum.at(hi_w, v_of, mp + gh + rho + eta)
+    np.maximum.at(lo_w, v_of, mp + gh - rho - eta); np.minimum.at(hi_w, v_of, mp + gh + rho + eta)          # intersection over the variable's rows (one per logged-round cell)
     lo_w = np.maximum(lo_w, P["LO"]); hi_w = np.minimum(hi_w, P["HI"])
-    centre = np.zeros(nV); centre[v_of] = mp + gh
+    csum = np.bincount(v_of, weights=mp + gh, minlength=nV); ccnt = np.bincount(v_of, minlength=nV); centre = csum / np.maximum(ccnt, 1)   # mean LC centre per variable
     qv = P["qu"][P["v_user"], P["v_act"]]
     (va, vs), lb7, ub7, info = X.b7_rows(P, a.z)
     print(f"\n=== {method}: eps_max = {rho:.2f} (rho = eta), LP vars {nV}, dominance rows {len(va)}, users with favourite as LP variable {info['users_star_is_variable']}", flush=True)
@@ -40,5 +41,5 @@ for method in a.clusterings:
     print(f"   per-user requirement (max over rows and lb, minus window top): > 0 for {(need > 1e-9).sum()} users; p50 {np.median(need):.2f}; p90 {np.percentile(need, 90):.2f}; max {need.max():.2f}  => smallest uniform t clearing all users ~ {max(need.max(), 0):.1f}")
     worst = stars[np.argsort(-need)[:5]]
     print("   five worst favourites (centre f+g, true q, window top, lb7, max other-action window bottom):", [(round(centre[s], 1), round(qv[s], 1), round(hi_w[s], 1), round(lb7[s], 1), round(lo_w[va[vs == s]].max(), 1)) for s in worst])
-    print(f"   favourites: centre f+g median {np.median(centre[stars]):.2f}, true q median {np.median(qv[stars]):.2f}, q - centre median {np.median(qv[stars] - centre[stars]):.2f}; share of favourites whose centre was clipped: {np.mean(np.abs(P['M'][P['v_user'][stars], P['v_act'][stars]] - centre[stars] + gh[np.searchsorted(v_of, stars)]) > 1e-9) if False else float('nan')}")
+    print(f"   favourites: centre f+g median {np.median(centre[stars]):.2f}, true q median {np.median(qv[stars]):.2f}, q - centre median {np.median(qv[stars] - centre[stars]):.2f}; rows per favourite variable median {np.median(ccnt[stars]):.0f}")
     print(f"   truth check at eps_max: favourites with true q outside their window: {((qv[stars] < lo_w[stars] - 1e-9) | (qv[stars] > hi_w[stars] + 1e-9)).sum()} of {len(stars)}", flush=True)
