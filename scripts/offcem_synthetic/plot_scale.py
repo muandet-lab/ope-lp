@@ -61,7 +61,7 @@ def sweep_plot(d, method, stem):
     ax.legend(handles=legend_handles(r), loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False, fontsize=10.5)
     cal = r["calibration"]
     note = (f"One world. ε_max = Z·τ̂ with Z = 2, τ̂ = {cal['tau']:.2f} from {cal['n_pairs']} within-(user, cluster) logged contrasts, noise σ̂ = {cal['sigma_noise']:.2f} ({'taken as known' if cal.get('sigma_source') == 'given' else str(cal['n_repeat_dof']) + ' repeat dof'}). "
-            f"Bars = supported estimate + closed-form LP interval, widened by 1.96 SE; m̂ = {'OffCEM two-step f̂' if w.get('model') == 'two_step' else 'cluster-level ridge'} cross-fitted by {w.get('folds', 'round')}, η = ρ, ridge centre, no recentring, range [-30, 30]; unsupported mass {r['lp_mass']:.2f}. "
+            f"Bars = supported estimate + closed-form LP interval, widened by 1.96 SE; m̂ = {'OffCEM two-step f̂' if w.get('model') == 'two_step' else 'cluster-level ridge'} cross-fitted by {w.get('folds', 'round')}, η = ρ, no recentring, range {w.get('limits', [-30, 30])}; unsupported mass {r['lp_mass']:.2f}. "
             f"Dashed lines = supported part V⁺ only. Displayed ε = stored ε_LC / 2. Wall clock for this clustering: {r.get('elapsed_seconds', 0) / 60:.1f} min.")
     fig.text(0.02, 0.008, "\n".join(textwrap.fill(p, 110) for p in note.split("\n")), fontsize=8.5, color="#555", va="bottom")
     fig.subplots_adjust(left=0.1, right=0.97, top=0.89, bottom=0.34)
@@ -115,6 +115,8 @@ def belief_axes(ax, r, rho, items, cols, allv):
         rr = r["runs"].get(f"{rho}|{key}")
         if key != "closed" and (rr is None or rr.get("lp_lo") is None):
             ax.text(k, np.mean(allv), "infeasible" if rr else "not run", rotation=90, ha="center", va="center", fontsize=9.5, color=c); continue
+        if key == "closed" and r["sweep"]["dr"][k0].get("lo") is None:
+            ax.text(k, np.mean(allv), "infeasible", rotation=90, ha="center", va="center", fontsize=9.5, color=c); continue
         for dx, sp, mk, fill, ls in STY:
             if key == "closed":
                 x = r["sweep"][sp][k0]; lo, hi = x["lo"], x["hi"]
