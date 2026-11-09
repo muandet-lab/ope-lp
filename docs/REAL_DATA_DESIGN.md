@@ -130,3 +130,31 @@ Reading:
 Structural conclusion for extreme multi-label data: the target's favourite label is, by construction, the rare positive inside any cluster of tens of labels, so a cluster-level centre is off
 by ≈ 0.4 on it and the logged contrasts (overwhelmingly negative–negative) cannot see that. Relaxed local correctness around a cluster centre is the wrong belief family for this data; what is
 needed is a belief about the favourite itself (B7-type) with enough logged evidence per user, i.e. repeated observations of the favourite, which only an informed logger provides.
+
+## 9. Status summary (2026-11-09): issues with the real-data arm and what has been tried
+
+World throughout: EUR-Lex 4K, 300 users, 8000 rounds, 100 clusters, lambda = 10 (every user's favourite in the LP, LP mass 0.90, 300 LP variables), user folds. V = 0.674, V+ = 0.029, V0 = 0.646.
+
+### Issues
+1. **Logging never shows positives (paper logger).** softmax(beta * ridge r_hat), beta = 30, logs a true positive in 0.2% of rounds; beta -> 0 (uniform) gives 0.1%. ~5 positives among 3956 labels. Cause: the logger is peaked on labels its ridge predicts, mostly not the true ones. Nothing in the LP region is ever observed.
+2. **Cluster-level local correctness is false for the favourite.** Any clustering, random or co-occurrence, puts a user's favourite (true mean ~0.72) in a cluster whose centre predicts ~0.30. Gap 0.4 on a [0,1] scale. Truth check: LC violated on 97-99% of LP mass, true vector infeasible in 145-295 of 300 cells.
+3. **Calibration cannot see it.** eps_max is estimated from same-user same-cluster logged pairs, which are negative-vs-negative; contrasts sit at the Bernoulli noise level -> tau^2 <= 0, eps_max = 0 (co-occurrence) or 0.2 (random). The one action where LC fails is never in a contrast pair.
+4. **Extras are valid but vacuous.** B3 coupling (L = 3): 217 same-action LP pairs, 0 violations, but L*d ~ 8 on a [0,1] scale. B3/B5 reference boxes: sigma = 0.5, median 1 repeat -> width ~1. B7 ordering: favourite is the true argmax for 100% of users, but 1 LP var/user -> 0 rows. B7 logged lower bound: mean -0.71, binds for 0 users. A valid global Lipschitz constant would be ~72 (users at distance 0.006 differing on a label).
+5. **Per-cell level band can hide (2).** eta_cell = max(rho, 2 SE) gives bars that contain V under random clusters while LC is violated on 79-88% of the mass: coverage by slack.
+6. **Level ridge instability with the two-step centre.** --alpha cv is degenerate for two_step (centre ignores alpha) and fell through to 0.1; the level ridge then extrapolated to cell levels of 40-80 and every LP was infeasible. Fixed: degenerate CV takes the strongest penalty.
+
+### Tried
+| Run (tag) | Change | Outcome |
+|---|---|---|
+| eurlex_* paper logger, beta 30 and lower | paper's logging policy | 0.1-0.2% positives logged; unusable |
+| eurlex_trueq_b12 | true-q softmax logger (paper's synthetic style), beta 12, eta_cell z=2 | random: bars contain V via eta slack, LC violated 79-88%; co-occurrence: eps_max 0, bars miss V |
+| eurlex_trueq_b8_etarho | eta = rho (synthetic belief setup), beta 8, all extras | all bars miss V; extras identical to baseline; LC violated 97-99.6% |
+| eurlex_trueq_b8_eps123 | eps forced to 1, 2, 3 | box = outcome range, LP [0, 0.90], trivially contains V0 |
+| (validity check, scratch) | each belief vs true means | only relaxed LC at calibrated rho is false; all extras valid but uninformative |
+| eurlex_trueq_b8_twostep | OffCEM centre g+h, alpha fell to 0.1 | infeasible everywhere (level ridge artefact) |
+| eurlex_trueq_b8_twostep_a1000 | OffCEM centre g+h, alpha 1000 | eps_max 0.45-0.64; LP contains V0 for all 4 clusterings at the top two grid levels; lowest levels infeasible (honest refusal); widths 0.7-0.9; extras still inert |
+
+### Where this leaves the real-data arm
+- The LP machinery is fine; the belief about the cluster centre is what fails on extreme multi-label data, and OffCEM's own second stage (h) is what repairs it. With g+h the LP covers V0 for every clustering, at an honest but wide interval.
+- To get *informative* bounds the extras need evidence about the favourite itself: repeated logs of it (B7 logged, B3 references) or a per-action centre with small residual. At beta = 8, 52 of 300 users have their favourite logged at all (median 1 repeat).
+- Open options: budgeted (L1) relaxation of LC with a target-weighted slack budget; calibrating rho from logged positives rather than within-cluster contrasts; one-sided LC for a valid lower bound; a logging policy with more repeats of favourites (beta lower or epsilon-mixed) to make B3/B7 bite.
