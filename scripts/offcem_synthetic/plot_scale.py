@@ -177,7 +177,12 @@ def belief_plot_all(d, methods, stem):
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--tag", default="offcem_default"); ap.add_argument("--seed", type=int, default=7000); a = ap.parse_args()
+    ap = argparse.ArgumentParser(description="Draws only what is asked for: one tag, the selected plot kinds, and never overwrites an existing file unless --overwrite is given.")
+    ap.add_argument("--tag", required=True); ap.add_argument("--seed", type=int, default=7000)
+    ap.add_argument("--kinds", nargs="+", default=["epsSweep", "beliefs", "beliefs_all", "lpOnly"], choices=["epsSweep", "beliefs", "beliefs_all", "lpOnly"], help="which plots to draw (default: all four kinds for this tag)")
+    ap.add_argument("--clusterings", nargs="+", default=None, help="restrict the per-clustering plots (epsSweep, beliefs) to these clusterings")
+    ap.add_argument("--overwrite", action="store_true", help="redraw plots whose png already exists (default: skip them and say so)")
+    a = ap.parse_args()
     # one file per run, or several per-clustering files sharing the tag (run_scale_gcp.sh writes scale_<tag>_<clustering>_seed<seed>.json): merge their 'clusterings'
     import glob
     files = sorted(glob.glob(os.path.join(BASE, "results_offcem_global", f"scale_{a.tag}_seed{a.seed}.json")) + glob.glob(os.path.join(BASE, "results_offcem_global", f"scale_{a.tag}_*_seed{a.seed}.json")))
@@ -189,14 +194,22 @@ def main():
     print("merged", [os.path.basename(f) for f in files])
     od = os.path.join(BASE, "slides_figs", "scale"); os.makedirs(od, exist_ok=True)
     pre = os.path.join(od, f"{a.tag}_seed{a.seed}")
-    for m, r in d["clusterings"].items():
-        if "sweep" in r:
-            sweep_plot(d, m, f"{pre}_{m}_epsSweep")
-        if "beliefs_info" in r:
-            belief_plot(d, m, f"{pre}_{m}_beliefs")
-    belief_plot_all(d, list(d["clusterings"]), f"{pre}_beliefs_all")
-    lp_only_sweep_plot(d, list(d["clusterings"]), f"{pre}_lpOnly_epsSweep")
-    print("wrote plots under", od)
+    def want(path):
+        if os.path.exists(path + ".png") and not a.overwrite:
+            print("exists, skipped (use --overwrite):", os.path.basename(path) + ".png"); return False
+        return True
+    ms = [m for m in d["clusterings"] if a.clusterings is None or m in a.clusterings]
+    for m in ms:
+        r = d["clusterings"][m]
+        if "epsSweep" in a.kinds and "sweep" in r and want(f"{pre}_{m}_epsSweep"):
+            sweep_plot(d, m, f"{pre}_{m}_epsSweep"); print("wrote", f"{a.tag}_seed{a.seed}_{m}_epsSweep.png/.pdf")
+        if "beliefs" in a.kinds and "beliefs_info" in r and want(f"{pre}_{m}_beliefs"):
+            belief_plot(d, m, f"{pre}_{m}_beliefs"); print("wrote", f"{a.tag}_seed{a.seed}_{m}_beliefs.png/.pdf")
+    if "beliefs_all" in a.kinds and want(f"{pre}_beliefs_all"):
+        belief_plot_all(d, list(d["clusterings"]), f"{pre}_beliefs_all"); print("wrote", f"{a.tag}_seed{a.seed}_beliefs_all.png/.pdf")
+    if "lpOnly" in a.kinds and want(f"{pre}_lpOnly_epsSweep"):
+        lp_only_sweep_plot(d, list(d["clusterings"]), f"{pre}_lpOnly_epsSweep"); print("wrote", f"{a.tag}_seed{a.seed}_lpOnly_epsSweep.png/.pdf")
+    print("plots directory:", od)
 
 
 if __name__ == "__main__":
