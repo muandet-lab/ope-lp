@@ -115,7 +115,9 @@ def run(args):
             print(f"[{method}] ridge alpha by out-of-fold MSE: {oof} -> {alpha}", flush=True)
         else:
             alpha = float(args.alpha)
-        P = B.prep(args.seed, user_folds=(args.folds == "user"), W=W, lab=lab, model=args.model, lam=lam, limits=limits, calibrate=calibrate, sigma_ref=sigma_ref, alpha=alpha)
+        P = B.prep(args.seed, user_folds=(args.folds == "user"), W=W, lab=lab, model=args.model, lam=lam, limits=limits, calibrate=calibrate, sigma_ref=sigma_ref, alpha=alpha, clip=args.clip_model)
+        if P.get("clip_info"):
+            r["clip_info"] = P["clip_info"]; print(f"[{method}] centre clipped to the cluster's logged reward range: {P['clip_info']}", flush=True)
         Wp, M = P["W"], P["M"]; LO, HI = P["LO"], P["HI"]
         P["gh_cell"] = P["gh"]                            # P["gh"] is already one level estimate per (round, cluster) cell
         if args.ref_z is not None:                        # one reference rule for every logged interval (B3 references, B5 endpoints); B7 logged bounds use --z
@@ -190,6 +192,14 @@ def run(args):
                 if key in r["runs"] and not args.redo:
                     continue
                 lo0, up0, info, secs = X.solve_both(P, rho, lb, ub, L=L_use, coupling=coup, dom=dm, tl=args.time_limit, max_it=args.max_it)
+                if lo0 is None and args.soft_t and name != "baseline":      # option (5): relax the extra beliefs by t, smallest feasible t in the list
+                    tried = {"0": info["status"]}
+                    for t_ in args.soft_t:
+                        lo0, up0, info, secs = X.solve_both(P, rho, lb, ub, L=L_use, coupling=coup, dom=dm, tl=args.time_limit, max_it=args.max_it, t=t_)
+                        tried[f"{t_:g}"] = info["status"]
+                        if lo0 is not None:
+                            break
+                    info = dict(info, soft_t_tried=tried, min_feasible_t=(float(t_) if lo0 is not None else None))
                 rr = B.rec(P, rho, L_use if coup else None, name, lo0, up0, info, secs)
                 rr["n_constraints"] = dict(lc_rows=int(2 * P["n_pairs"]), coupling_cuts=int(info["cuts"]), dominance_rows=int(len(dm[0])) if dm is not None else 0, vars=int(P["nV"] + P["Kc"]))
                 base_ = r["runs"].get(f"{rho}|baseline")
@@ -227,6 +237,8 @@ if __name__ == "__main__":
     ap.add_argument("--ref-z", type=float, default=None, help="if set, ONE margin multiplier for every logged reference interval (B3 references and B5 endpoints); the separate B3_z variant is then skipped")
     ap.add_argument("--beliefs", nargs="*", default=None, help="subset of belief names to run (default all)")
     ap.add_argument("--time-limit", type=float, default=3600.0); ap.add_argument("--max-it", type=int, default=8)
+    ap.add_argument("--clip-model", default=None, choices=(None, "cluster_logged"), help="option (4): clip the centre m_hat(u,a) to [min, max] of the logged rewards of a's cluster (data only)")
+    ap.add_argument("--soft-t", type=float, nargs="*", default=None, help="option (5): when an extra belief is infeasible, relax every extra-belief constraint by t (reference bounds +-t, coupling L d + t, dominance <= t) for t in this ascending list and keep the smallest feasible t")
     ap.add_argument("--model", default="cluster_level", choices=("cluster_level", "two_step"), help="reward model m_hat: cluster-level ridge (plots 03-10) or OffCEM's two-step f_hat = g_hat(x,c) + h_hat(x,a) (paper code)")
     ap.add_argument("--folds", default="round", choices=("round", "user"), help="cross-fitting folds for m_hat: round (plot-04 setup; merged LP can be infeasible when fold models disagree) or user (merged LP = closed form)")
     ap.add_argument("--tag", default="offcem_default"); ap.add_argument("--redo", action="store_true")

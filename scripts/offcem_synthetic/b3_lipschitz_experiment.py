@@ -46,7 +46,7 @@ LO, HI = -30.0, 30.0
 KNN = 3
 
 
-def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level", lam=None, limits=None, calibrate=None, sigma_ref=None, alpha=1.0):
+def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level", lam=None, limits=None, calibrate=None, sigma_ref=None, alpha=1.0, clip=None):
     """W = None: the small world of plots 03-10 (SPLIT_WORLD, original exclusions) with K-means labels. Otherwise a prebuilt world and an action-label vector (any clustering).
     lam: overlap threshold defining the LP region (None = pi0 == 0 only). limits: outcome range (default [-30, 30]). calibrate: eps_max calibration function (default eps_sweep_dgp.calibrate_user_cells).
     sigma_ref: noise sd used for logged reference intervals (default: the calibration's sigma_noise)."""
@@ -58,6 +58,13 @@ def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level", lam=Non
     M = G.get_model(Wp, model, "ridge", 5, alpha, 1, user_folds=user_folds)
     if limits is not None:
         M = np.clip(M, lo_, hi_)                        # the centre is a prediction of a mean in the outcome range (e.g. a probability)
+    clip_info = None
+    if clip == "cluster_logged":                        # option (4): clip the centre to the range of LOGGED rewards of the action's cluster (data only; removes extreme predictions)
+        clr = Wp["cl"][W["act"]]; y = np.asarray(W["y"], float)
+        ymin = np.array([y[clr == c].min() if (clr == c).any() else lo_ for c in range(Wp["C"])]); ymax = np.array([y[clr == c].max() if (clr == c).any() else hi_ for c in range(Wp["C"])])
+        lo_c, hi_c = ymin[Wp["cl"]][None, :], ymax[Wp["cl"]][None, :]
+        M0 = M; M = np.clip(M, lo_c, hi_c)
+        clip_info = dict(rule="cluster_logged", share_clipped=float((M != M0).mean()), mean_abs_change=float(np.abs(M - M0).mean()), max_abs_change=float(np.abs(M - M0).max()))
     cal = (calibrate or S.calibrate_user_cells)(Wp, M)
     et = E.eta_hat(Wp, M, cal)
     st = X.structures(Wp, M, lam, alpha)
@@ -68,7 +75,7 @@ def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level", lam=Non
     Xu, qu = W["X_unit"][first], W["q_unit"][first]
     Zs = (Xu - Xu.mean(0)) / Xu.std(0)
     D = np.sqrt(((Zs[:, None] - Zs[None]) ** 2).sum(-1)); np.fill_diagonal(D, np.inf)
-    P = dict(W=Wp, M=M, cal=cal, eta=et["eta_hat"], st=st, inv=inv, nu=nu, K=K, C=C, D=D, qu=qu, sigma=(cal["sigma_noise"] if sigma_ref is None else float(sigma_ref)), seed=seed, lam=lam, LO=lo_, HI=hi_, limits=[lo_, hi_], alpha=alpha)
+    P = dict(W=Wp, M=M, cal=cal, eta=et["eta_hat"], st=st, inv=inv, nu=nu, K=K, C=C, D=D, qu=qu, sigma=(cal["sigma_noise"] if sigma_ref is None else float(sigma_ref)), seed=seed, lam=lam, LO=lo_, HI=hi_, limits=[lo_, hi_], alpha=alpha, clip_info=clip_info)
     U, ident, wu, pi = st["U"], st["ident"], st["wu"], st["pi"]
     pu, pa = np.nonzero(U); pc = km[pa]; keep = ident[pu, pc]
     coef_all = wu[pu] * pi[pu, pa]

@@ -99,40 +99,43 @@ def b7_rows(P, z=None):
                                       vars_with_lb_from_logged=int((lb_x > LO).sum()), vars_with_ub_from_star=int((ub_x < HI).sum()))
 
 
-def lp(P, rho, lb, ub, L, pairs, dom, tl, sign):
-    nV, Kc = P["nV"], P["Kc"]
-    lbs = np.concatenate([lb, P["gh"] - P["eta"]]); ubs = np.concatenate([ub, P["gh"] + P["eta"]])
+def lp(P, rho, lb, ub, L, pairs, dom, tl, sign, t=0.0):
+    """t >= 0: option (5), soft extra beliefs. Every extra-belief constraint is relaxed by t: reference bounds lb - t / ub + t (within the outcome range),
+    coupling |mu_u - mu_v| <= L d + t, dominance mu_a - mu_a* <= t. The local-correctness rows and the level band are NOT relaxed (that is eps / eta)."""
+    nV, Kc = P["nV"], P["Kc"]; LO_, HI_ = P.get("LO", B.LO), P.get("HI", B.HI)
+    lbt, ubt = (np.maximum(lb - t, LO_), np.minimum(ub + t, HI_)) if t > 0 else (lb, ub)
+    lbs = np.concatenate([lbt, P["gh"] - P["eta"]]); ubs = np.concatenate([ubt, P["gh"] + P["eta"]])
     b = np.concatenate([P["mp"] + rho, -P["mp"] + rho]); blocks = [P["A_base"]]
     if pairs is not None and len(pairs[0]):
         v1, v2 = pairs; e = len(v1); r = np.arange(e)
         blocks.append(coo_matrix((np.concatenate([np.ones(e), -np.ones(e), -np.ones(e), np.ones(e)]), (np.concatenate([r, r, r + e, r + e]), np.concatenate([v1, v2, v1, v2]))), shape=(2 * e, nV + Kc)).tocsr())
-        dd = L * P["D"][P["v_user"][v1], P["v_user"][v2]]; b = np.concatenate([b, dd, dd])
+        dd = L * P["D"][P["v_user"][v1], P["v_user"][v2]] + t; b = np.concatenate([b, dd, dd])
     if dom is not None:
         va, vs = dom; e = len(va); r = np.arange(e)
         blocks.append(coo_matrix((np.concatenate([np.ones(e), -np.ones(e)]), (np.concatenate([r, r]), np.concatenate([va, vs]))), shape=(e, nV + Kc)).tocsr())
-        b = np.concatenate([b, np.zeros(e)])
+        b = np.concatenate([b, np.full(e, float(t))])
     A = vstack(blocks).tocsr() if len(blocks) > 1 else blocks[0]
     scale = P["coef_v"].max(); c = np.zeros(nV + Kc); c[:nV] = P["coef_v"] / scale
     r = linprog(sign * c, A_ub=A, b_ub=b, bounds=np.column_stack([lbs, ubs]), method="highs", options=dict(time_limit=tl, presolve=True))
     return r, scale
 
 
-def solve_both(P, rho, lb, ub, L=None, coupling=False, dom=None, tl=300.0, max_it=8):
-    t0 = time.perf_counter(); info = dict(iterations=0, cuts=0, full_check_passed=None, status="optimal")
-    if (lb > ub + 1e-9).any():
-        return None, None, dict(info, status="infeasible_bounds", n_bad=int((lb > ub + 1e-9).sum())), time.perf_counter() - t0
+def solve_both(P, rho, lb, ub, L=None, coupling=False, dom=None, tl=300.0, max_it=8, t=0.0):
+    t0 = time.perf_counter(); info = dict(iterations=0, cuts=0, full_check_passed=None, status="optimal", t=float(t))
+    if (lb - t > ub + t + 1e-9).any():
+        return None, None, dict(info, status="infeasible_bounds", n_bad=int((lb - t > ub + t + 1e-9).sum())), time.perf_counter() - t0
     res = []
     for sign in (1.0, -1.0):
         pairs = B.knn_pairs(P) if coupling else None
         for it in range(max_it if coupling else 1):
-            r, scale = lp(P, rho, lb, ub, L, pairs, dom, tl, sign)
+            r, scale = lp(P, rho, lb, ub, L, pairs, dom, tl, sign, t)
             info["iterations"] = max(info["iterations"], it + 1)
             if not r.success:
                 info["status"] = "infeasible" if r.status == 2 else f"solver_status_{r.status}"
                 return None, None, info, time.perf_counter() - t0
             if not coupling:
                 break
-            vs, nviol = B.violated(P, r.x[:P["nV"]], L)
+            vs, nviol = B.violated(P, r.x[:P["nV"]], L, tol=1e-6 + t)
             if nviol == 0:
                 info["full_check_passed"] = True if info["full_check_passed"] is None else info["full_check_passed"]
                 break
