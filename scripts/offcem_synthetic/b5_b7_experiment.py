@@ -88,10 +88,12 @@ def b7_rows(P, z=None):
             pa.append(VID[u, others]); ps.append(np.full(len(others), vs))
             logged = np.flatnonzero(~np.isnan(Rlo[u]) & (np.arange(K) != a_s))
             if z is not None and len(logged):
-                lb_x[vs] = max(lb_x[vs], (mean[u, logged] - z * P["sigma"] / np.sqrt(n_ref[u, logged])).max())
+                lbz = P["ref_lbub_z"][0][u, logged] if "ref_lbub_z" in P else mean[u, logged] - z * P["sigma"] / np.sqrt(n_ref[u, logged])
+                lb_x[vs] = max(lb_x[vs], lbz.max())
         elif z is not None and not np.isnan(Rhi[u, a_s]):
             n_star_logged_only += 1
-            ub_x[VID[u, others]] = np.minimum(ub_x[VID[u, others]], mean[u, a_s] + z * P["sigma"] / np.sqrt(n_ref[u, a_s]))
+            ubz = P["ref_lbub_z"][1][u, a_s] if "ref_lbub_z" in P else mean[u, a_s] + z * P["sigma"] / np.sqrt(n_ref[u, a_s])
+            ub_x[VID[u, others]] = np.minimum(ub_x[VID[u, others]], ubz)
         else:
             n_star_none += 1
     pa, ps = np.concatenate(pa), np.concatenate(ps)

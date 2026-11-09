@@ -121,6 +121,14 @@ def run(args):
         if P.get("clip_info"):
             r["clip_info"] = P["clip_info"]; print(f"[{method}] centre clipped to the cluster's logged reward range: {P['clip_info']}", flush=True)
         Wp, M = P["W"], P["M"]; LO, HI = P["LO"], P["HI"]
+        if args.clip_model == "outcome_cell":             # clip the LC centre m_hat + g_hat of each pair into the outcome range by shifting the cell's level estimate (a mean of a bounded outcome lies in the range)
+            cell_id = np.repeat(np.arange(P["Kc"]), 0)
+            A = P["A_base"].tocsr(); rows = A[:P["n_pairs"]]; cells = np.asarray(rows.indices.reshape(P["n_pairs"], 2)[:, 1]) - P["nV"]
+            c = P["mp"] + P["gh"]; shift = np.clip(c, LO, HI) - c
+            cell_shift = np.zeros(P["Kc"]); np.add.at(cell_shift, cells, shift); cnt = np.bincount(cells, minlength=P["Kc"]); cell_shift /= np.maximum(cnt, 1)
+            P["gh"] = P["gh"] + cell_shift[cells] if len(P["gh"]) == P["n_pairs"] else P["gh"] + cell_shift
+            r["clip_info"] = dict(rule="outcome_cell", share_pairs_shifted=float((np.abs(shift) > 1e-12).mean()), mean_abs_shift=float(np.abs(shift).mean()), max_abs_shift=float(np.abs(shift).max()))
+            print(f"[{method}] LC centre clipped into the outcome range: {r['clip_info']}", flush=True)
         P["gh_cell"] = P["gh"]                            # P["gh"] is already one level estimate per (round, cluster) cell
         if args.ref_z is not None:                        # one reference rule for every logged interval (B3 references, B5 endpoints); B7 logged bounds use --z
             mean_, n_ = (P["ref_log"][0] + P["ref_log"][1]) / 2, P["ref_n"]
@@ -163,6 +171,17 @@ def run(args):
         with np.errstate(invalid="ignore", divide="ignore"):
             hz = args.z * P["sigma"] / np.sqrt(n)
         P["ref_log_z"] = (np.where(n > 0, mean - hz, np.nan), np.where(n > 0, mean + hz, np.nan))
+        if args.binomial_refs:                            # Bernoulli outcomes: exact Clopper-Pearson intervals at the two-sided level implied by z replace mean +- z sigma / sqrt(n) everywhere a logged reference is used
+            from scipy.stats import beta as _beta, norm as _norm
+            n_ = P["ref_n"]; mean_ = (P["ref_log"][0] + P["ref_log"][1]) / 2; s_ = np.rint(np.where(n_ > 0, mean_ * n_, 0.0))
+            def cp(zz):
+                a = 2 * _norm.sf(zz)
+                with np.errstate(invalid="ignore"):
+                    lo_ = np.where(s_ > 0, _beta.ppf(a / 2, s_, n_ - s_ + 1), 0.0); hi_ = np.where(s_ < n_, _beta.ppf(1 - a / 2, s_ + 1, n_ - s_), 1.0)
+                return np.where(n_ > 0, lo_, np.nan), np.where(n_ > 0, hi_, np.nan)
+            P["ref_log"] = cp(1.96); P["ref_log_z"] = cp(args.z); P["ref_lbub_z"] = cp(args.z)
+            r["binomial_refs"] = dict(level_default=1.96, level_z=args.z, pairs_logged=int((n_ > 0).sum()), median_n=float(np.median(n_[n_ > 0])))
+            print(f"[{method}] logged references: Clopper-Pearson (two-sided z = 1.96 default / z = {args.z:g}); {r['binomial_refs']}", flush=True)
         Linfo = estimate_L(P) if args.L == "auto" else dict(status="given", L_hat=float(args.L))
         L_use = float(Linfo["L_hat"]); r["L_calibration"] = Linfo
         print(f"[{method}] L: {Linfo}", flush=True)
@@ -241,7 +260,8 @@ if __name__ == "__main__":
     ap.add_argument("--time-limit", type=float, default=3600.0); ap.add_argument("--max-it", type=int, default=8)
     ap.add_argument("--h-shrink", default=None, help="two_step only: weight s on the pairwise correction h_hat (f = g_hat_s + s h_hat, g refit on y - s h); a number, or 'cv' = s in {0,.25,.5,.75,1} by out-of-fold MSE on the logged rounds")
     ap.add_argument("--g-model", default="mlp", choices=("mlp", "ridge"), help="two_step only: first stage g_hat(x,c): paper's MLP (OBP RegressionModel) or one ridge per cluster on the user context (alpha = --alpha)")
-    ap.add_argument("--clip-model", default=None, choices=(None, "cluster_logged"), help="option (4): clip the centre m_hat(u,a) to [min, max] of the logged rewards of a's cluster (data only)")
+    ap.add_argument("--binomial-refs", action="store_true", help="Bernoulli outcomes: Clopper-Pearson intervals (level from z) for every logged reference (B3 refs, B5 endpoints, B7 bounds) instead of mean +- z sigma / sqrt(n)")
+    ap.add_argument("--clip-model", default=None, choices=(None, "cluster_logged", "outcome_cell"), help="option (4): cluster_logged = clip m_hat(u,a) to [min, max] of the logged rewards of a's cluster; outcome_cell = shift each cell's level so that the LC centre m_hat + g_hat lies in the outcome range")
     ap.add_argument("--soft-t", type=float, nargs="*", default=None, help="option (5): when an extra belief is infeasible, relax every extra-belief constraint by t (reference bounds +-t, coupling L d + t, dominance <= t) for t in this ascending list and keep the smallest feasible t")
     ap.add_argument("--model", default="cluster_level", choices=("cluster_level", "two_step"), help="reward model m_hat: cluster-level ridge (plots 03-10) or OffCEM's two-step f_hat = g_hat(x,c) + h_hat(x,a) (paper code)")
     ap.add_argument("--folds", default="round", choices=("round", "user"), help="cross-fitting folds for m_hat: round (plot-04 setup; merged LP can be infeasible when fold models disagree) or user (merged LP = closed form)")

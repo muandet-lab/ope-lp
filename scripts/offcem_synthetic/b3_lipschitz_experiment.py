@@ -125,7 +125,8 @@ def box(P, L, ref):
         avail[vid] = len(refs) - np.isin(us, refs)
         if not len(refs):
             continue
-        Ds = L * D[np.ix_(us, refs)]                      # inf on the diagonal (a user is not its own reference)
+        Dsub = D[np.ix_(us, refs)]
+        Ds = np.where(np.isinf(Dsub), np.inf, L * Dsub)   # inf on the diagonal (a user is not its own reference); kept inf even when L = 0 (0 * inf would be NaN)
         lb[vid] = np.maximum((Rlo[refs, a][None] - Ds).max(1), lo_); ub[vid] = np.minimum((Rhi[refs, a][None] + Ds).min(1), hi_)
     return lb, ub, avail
 
