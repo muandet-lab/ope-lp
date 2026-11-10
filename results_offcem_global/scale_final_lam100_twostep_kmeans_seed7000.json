@@ -19,7 +19,7 @@
   ],
   "lam": 100.0,
   "eps_min": 1.0,
-  "build_seconds": 2.556725128000835,
+  "build_seconds": 2.5431054279906675,
   "n_rounds": 8000,
   "n_users": 200,
   "dgp_clusters": 50
@@ -295,6 +295,144 @@
       "dominance_rows": 199800,
       "vars": 599946
      }
+    },
+    "6.2978467366797535|B3_z3.5": {
+     "rho": 6.2978467366797535,
+     "L": 3.0,
+     "mode": "B3_z3.5",
+     "seconds": 3644.6739017939835,
+     "iterations": 3,
+     "cuts": 536000,
+     "full_check_passed": true,
+     "status": "solver_status_1",
+     "t": 8.0,
+     "soft_t_tried": {
+      "0": "infeasible",
+      "2": "infeasible",
+      "8": "solver_status_1"
+     },
+     "min_feasible_t": null,
+     "n_constraints": {
+      "lc_rows": 8007456,
+      "coupling_cuts": 536000,
+      "dominance_rows": 0,
+      "vars": 599946
+     }
+    },
+    "6.2978467366797535|B3z+B5_q5": {
+     "rho": 6.2978467366797535,
+     "L": 3.0,
+     "mode": "B3z+B5_q5",
+     "seconds": 3636.235243739997,
+     "iterations": 3,
+     "cuts": 536000,
+     "full_check_passed": true,
+     "status": "solver_status_1",
+     "t": 8.0,
+     "soft_t_tried": {
+      "0": "infeasible",
+      "2": "infeasible",
+      "8": "solver_status_1"
+     },
+     "min_feasible_t": null,
+     "n_constraints": {
+      "lc_rows": 8007456,
+      "coupling_cuts": 536000,
+      "dominance_rows": 0,
+      "vars": 599946
+     }
+    },
+    "6.2978467366797535|B3z+B5_q5+B7_z3.5": {
+     "rho": 6.2978467366797535,
+     "L": 3.0,
+     "mode": "B3z+B5_q5+B7_z3.5",
+     "seconds": 326.2394307149807,
+     "iterations": 1,
+     "cuts": 0,
+     "full_check_passed": null,
+     "status": "infeasible",
+     "t": 8.0,
+     "soft_t_tried": {
+      "0": "infeasible",
+      "2": "infeasible",
+      "8": "infeasible"
+     },
+     "min_feasible_t": null,
+     "n_constraints": {
+      "lc_rows": 8007456,
+      "coupling_cuts": 0,
+      "dominance_rows": 199800,
+      "vars": 599946
+     }
+    },
+    "8.063795648906337|B3_z3.5": {
+     "rho": 8.063795648906337,
+     "L": 3.0,
+     "mode": "B3_z3.5",
+     "seconds": 3602.7592512429983,
+     "iterations": 3,
+     "cuts": 536000,
+     "full_check_passed": true,
+     "status": "solver_status_1",
+     "t": 8.0,
+     "soft_t_tried": {
+      "0": "infeasible",
+      "2": "solver_status_1",
+      "8": "solver_status_1"
+     },
+     "min_feasible_t": null,
+     "n_constraints": {
+      "lc_rows": 8007456,
+      "coupling_cuts": 536000,
+      "dominance_rows": 0,
+      "vars": 599946
+     }
+    },
+    "8.063795648906337|B3z+B5_q5": {
+     "rho": 8.063795648906337,
+     "L": 3.0,
+     "mode": "B3z+B5_q5",
+     "seconds": 3466.0316090260167,
+     "iterations": 3,
+     "cuts": 515147,
+     "full_check_passed": true,
+     "status": "solver_status_1",
+     "t": 8.0,
+     "soft_t_tried": {
+      "0": "infeasible",
+      "2": "solver_status_1",
+      "8": "solver_status_1"
+     },
+     "min_feasible_t": null,
+     "n_constraints": {
+      "lc_rows": 8007456,
+      "coupling_cuts": 515147,
+      "dominance_rows": 0,
+      "vars": 599946
+     }
+    },
+    "8.063795648906337|B3z+B5_q5+B7_z3.5": {
+     "rho": 8.063795648906337,
+     "L": 3.0,
+     "mode": "B3z+B5_q5+B7_z3.5",
+     "seconds": 323.0528577710211,
+     "iterations": 1,
+     "cuts": 0,
+     "full_check_passed": null,
+     "status": "infeasible",
+     "t": 8.0,
+     "soft_t_tried": {
+      "0": "infeasible",
+      "2": "infeasible",
+      "8": "infeasible"
+     },
+     "min_feasible_t": null,
+     "n_constraints": {
+      "lc_rows": 8007456,
+      "coupling_cuts": 0,
+      "dominance_rows": 199800,
+      "vars": 599946
+     }
     }
    },
    "ari_vs_dgp": 0.0006003979698422917,
@@ -369,7 +507,7 @@
    "n_merged_vars": 200000,
    "n_pairs": 4003728,
    "sigma_hat": 3.1881900291574645,
-   "prep_seconds": 86.51020316898939,
+   "prep_seconds": 84.0837103019876,
    "sweep": {
     "dr": [
      {
@@ -901,7 +1039,7 @@
      "cells_spread_over_2rho": 80735
     }
    },
-   "elapsed_seconds": 4621.502179289993,
+   "elapsed_seconds": 21340.121869983996,
    "done": true
   }
  }
