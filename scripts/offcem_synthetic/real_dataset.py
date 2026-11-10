@@ -96,7 +96,16 @@ class ExtremeBanditDataset(BaseRealBanditDataset):
                     (data_i, data_pos_i, [0, len(data_i)]), shape=(1, num_feat)
                 )
             )
-        return sparse.vstack(data).toarray(), sparse.vstack(label).toarray()
+        X = sparse.vstack(data).tocsr()
+        # features stay sparse when wide (Wiki10-31K: 101,938 columns would need ~17 GB dense); EUR-Lex (5,000) densifies as in the paper's code
+        return (X.toarray() if num_feat <= 20000 else X), sparse.vstack(label).toarray()
+
+    def _reduce(self, X):
+        """PCA(n_components) on dense features (paper); TruncatedSVD(n_components) on sparse ones (PCA cannot take sparse input). Refit per call as in the paper's code."""
+        if sparse.issparse(X):
+            from sklearn.decomposition import TruncatedSVD
+            return TruncatedSVD(n_components=self.n_components, random_state=self.random_state).fit_transform(X)
+        return self.pca.fit_transform(X)
 
     def train_pi_b(
         self,
@@ -104,7 +113,7 @@ class ExtremeBanditDataset(BaseRealBanditDataset):
     ) -> None:
         idx = self.random_.choice(self.n_test, size=n_rounds, replace=False)
         contexts = self.test_data[idx]
-        contexts = self.sc.fit_transform(self.pca.fit_transform(contexts))
+        contexts = self.sc.fit_transform(self._reduce(contexts))
         expected_rewards = self.test_label[idx]
         expected_rewards = expected_rewards * (1 - self.eta)
         expected_rewards += (1 - expected_rewards) * (self.eta - 1)
@@ -131,9 +140,7 @@ class ExtremeBanditDataset(BaseRealBanditDataset):
             n_rounds = self.n_train
         idx = self.random_.choice(self.n_train, size=n_rounds, replace=False)
         fixed_user_contexts = self.train_data[idx]
-        fixed_user_contexts = self.sc.fit_transform(
-            self.pca.fit_transform(fixed_user_contexts)
-        )
+        fixed_user_contexts = self.sc.fit_transform(self._reduce(fixed_user_contexts))
         fixed_q_x_a = self.train_label[idx]
         fixed_q_x_a = fixed_q_x_a * (1 - self.eta)
         fixed_q_x_a += (1 - fixed_q_x_a) * (self.eta - 1)
