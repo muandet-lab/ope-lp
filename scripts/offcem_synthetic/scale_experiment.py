@@ -222,6 +222,10 @@ def run(args):
                      ("B5_range", lb5r, ub5r, False, None), ("B5_q5", lb5q, ub5q, False, None), ("B7_ord", lb7o, ub7o, False, domo), (f"B7_z{args.z:g}", lb7z, ub7z, False, domz),
                      (f"B5_q5+B7_z{args.z:g}", np.maximum(lb5q, lb7z), np.minimum(ub5q, ub7z), False, domz),
                      ("B3z+B5_q5", np.maximum(lb3z, lb5q), np.minimum(ub3z, ub5q), True, None),
+                     # write-up form of the six constraints: Lipschitz as coupling among the unsupported variables only (no logged reference boxes), dominance as ordering only (no logged anchors)
+                     ("B3c", np.full(P["nV"], LO), np.full(P["nV"], HI), True, None),
+                     ("B3c+B5_q5", lb5q, ub5q, True, None),
+                     ("B3c+B5_q5+B7_ord", lb5q, ub5q, True, domo),
                      (f"B3z+B5_q5+B7_z{args.z:g}", np.maximum(np.maximum(lb3z, lb5q), lb7z), np.minimum(np.minimum(ub3z, ub5q), ub7z), True, domz)]
             for name, lb, ub, coup, dm in items:
                 if args.beliefs and name not in args.beliefs and name != "baseline":
