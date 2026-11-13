@@ -77,6 +77,37 @@ def truth_checks(P, rho, eta):
                 cells_spread_over_2rho=int(((hi - lo) > 2 * rho + 1e-9).sum()))
 
 
+def prob_belief_box(y_log, LO, HI, args):
+    """Probability beliefs on P_{Y(t)|X=x} (finite LP of Sec. 3.2, constraints (7)-(9)), thresholds = quantiles of the logged rewards (logged data only):
+         PB_sev : P(Y < q_sev) <= alpha * P(Y < q_poor)      'severe outcomes are rare among poor outcomes'
+         PB_ext : P(Y < q_ext) <= p_ext                      'extreme losses are rare'
+    The outcome range [LO, HI] is split into cells of width --pb-cell, with the thresholds added as cell edges. Every belief is the same for every unsupported pair and involves only
+    that pair's cell probabilities p^B, so the projection of the joint LP (mu, b, p^B) onto mu is exactly the per-pair interval [l, u] solved here (min / max mu over p^B), and the
+    full LP is solved with mu in [l, u]. Returns {name: (l, u, rows)} for 'PB_sev' and 'PB_sev+ext', plus the thresholds."""
+    from scipy.optimize import linprog
+    y_log = np.asarray(y_log, float)
+    th = dict(sev=float(np.quantile(y_log, args.pb_sev_q)), poor=float(np.quantile(y_log, args.pb_poor_q)), ext=float(np.quantile(y_log, args.pb_ext_q)))
+    edges = np.unique(np.r_[np.arange(LO, HI + 1e-9, args.pb_cell), HI, [min(max(t, LO), HI) for t in th.values()]])
+    lo_e, hi_e = edges[:-1], edges[1:]; H = len(lo_e)
+    below = lambda t: (hi_e <= t + 1e-12).astype(float)              # cells inside (-inf, t): P(Y < t) = sum of their p^B
+    rows = dict(sev=(below(th["sev"]) - args.pb_alpha * below(th["poor"]), 0.0), ext=(below(th["ext"]), args.pb_ext_p))
+    out = dict(thresholds=th, cells=int(H))
+    for name, keys in (("PB_sev", ("sev",)), ("PB_sev+ext", ("sev", "ext"))):
+        A = [np.r_[lo_e, -1.0], np.r_[-hi_e, 1.0]] + [np.r_[rows[k][0], 0.0] for k in keys]; b = [0.0, 0.0] + [rows[k][1] for k in keys]   # (7) + belief rows
+        sol = [linprog(np.r_[np.zeros(H), s], A_ub=np.array(A), b_ub=b, A_eq=[np.r_[np.ones(H), 0.0]], b_eq=[1.0], bounds=[(0, None)] * H + [(None, None)], method="highs") for s in (1.0, -1.0)]  # (8), (9)
+        out[name] = (None, None) if any(z.status != 0 for z in sol) else (float(sol[0].fun), float(-sol[1].fun))
+    return out
+
+
+def prob_belief_false_mass(qv, w, sigma, th, args):
+    """Truth-only: share of LP mass whose TRUE outcome distribution N(q, sigma^2) (synthetic generator) violates each probability belief."""
+    from scipy.stats import norm
+    F = lambda t: norm.cdf((t - qv) / sigma)
+    sev = F(th["sev"]) <= args.pb_alpha * F(th["poor"]) + 1e-12; ext = F(th["ext"]) <= args.pb_ext_p + 1e-12
+    share = lambda ok: float((w * ~ok).sum() / w.sum())
+    return {"PB_sev": share(sev), "PB_ext": share(ext), "PB_sev+ext": share(sev & ext)}
+
+
 def dump(d, path):
     json.dump(d, open(path, "w"), indent=1, default=lambda o: o.item() if hasattr(o, "item") else str(o))
 
@@ -205,6 +236,12 @@ def run(args):
         b5 = {m: X.b5_bounds(P, m) for m in ("range", "q5")}
         b7 = {"B7_ord": X.b7_rows(P, None), f"B7_z{args.z:g}": X.b7_rows(P, args.z)}
         w = P["coef_v"]
+        pb = prob_belief_box(Wp["y"], LO, HI, args)
+        r["prob_beliefs_info"] = dict(thresholds=pb["thresholds"], cells=pb["cells"], cell_width=args.pb_cell, quantiles=dict(sev=args.pb_sev_q, poor=args.pb_poor_q, ext=args.pb_ext_q),
+                                      alpha=args.pb_alpha, p_ext=args.pb_ext_p, implied_mean_interval={k: pb[k] for k in ("PB_sev", "PB_sev+ext")},
+                                      true_false_mass=(None if args.real else prob_belief_false_mass(np.asarray(qv, float), w, float(cfg["sigma"]), pb["thresholds"], args)))
+        print(f"[{method}] probability beliefs: {r['prob_beliefs_info']}", flush=True)
+        pbox = {k: ((np.full(P["nV"], pb[k][0]), np.full(P["nV"], pb[k][1])) if pb[k][0] is not None else (np.full(P["nV"], HI), np.full(P["nV"], LO))) for k in ("PB_sev", "PB_sev+ext")}  # empty belief set -> infeasible box
         r["beliefs_info"] = dict(L=L_use, L_source=("logged-data 95th pct of noise-corrected same-action slopes" if args.L == "auto" else "given"), z=args.z, ref_z=args.ref_z, b3_refs_per_var_median=float(np.median(av3)), b3_share_vars_with_ref=float((av3 >= 1).mean()),
                                  b3_true_outside_mass=float((w * ((qv < lb3 - 1e-9) | (qv > ub3 + 1e-9))).sum() / w.sum()),
                                  b3z_true_outside_mass=float((w * ((qv < lb3z - 1e-9) | (qv > ub3z + 1e-9))).sum() / w.sum()),
@@ -226,6 +263,10 @@ def run(args):
                      ("B3c", np.full(P["nV"], LO), np.full(P["nV"], HI), True, None),
                      ("B3c+B5_q5", lb5q, ub5q, True, None),
                      ("B3c+B5_q5+B7_ord", lb5q, ub5q, True, domo),
+                     ("B3c+B7_ord", np.full(P["nV"], LO), np.full(P["nV"], HI), True, domo),   # same without cluster-specific bounds (B5)
+                     # probability beliefs on P_{Y(t)|X} (prob_belief_box), alone and on top of Lipschitz coupling
+                     ("PB_sev", *pbox["PB_sev"], False, None), ("PB_sev+ext", *pbox["PB_sev+ext"], False, None),
+                     ("B3c+PB_sev", *pbox["PB_sev"], True, None), ("B3c+PB_sev+ext", *pbox["PB_sev+ext"], True, None),
                      (f"B3z+B5_q5+B7_z{args.z:g}", np.maximum(np.maximum(lb3z, lb5q), lb7z), np.minimum(np.minimum(ub3z, ub5q), ub7z), True, domz)]
             for name, lb, ub, coup, dm in items:
                 if args.beliefs and name not in args.beliefs and name != "baseline":
@@ -290,5 +331,11 @@ if __name__ == "__main__":
     ap.add_argument("--soft-t", type=float, nargs="*", default=None, help="option (5): when an extra belief is infeasible, relax every extra-belief constraint by t (reference bounds +-t, coupling L d + t, dominance <= t) for t in this ascending list and keep the smallest feasible t")
     ap.add_argument("--model", default="cluster_level", choices=("cluster_level", "two_step"), help="reward model m_hat: cluster-level ridge (plots 03-10) or OffCEM's two-step f_hat = g_hat(x,c) + h_hat(x,a) (paper code)")
     ap.add_argument("--folds", default="round", choices=("round", "user"), help="cross-fitting folds for m_hat: round (plot-04 setup; merged LP can be infeasible when fold models disagree) or user (merged LP = closed form)")
+    ap.add_argument("--pb-sev-q", type=float, default=0.05, help="PB_sev: 'severe' threshold = this quantile of the logged rewards")
+    ap.add_argument("--pb-poor-q", type=float, default=0.5, help="PB_sev: 'poor' threshold = this quantile of the logged rewards")
+    ap.add_argument("--pb-alpha", type=float, default=0.2, help="PB_sev: P(Y < q_sev) <= alpha P(Y < q_poor)")
+    ap.add_argument("--pb-ext-q", type=float, default=0.01, help="PB_ext: 'extreme loss' threshold = this quantile of the logged rewards")
+    ap.add_argument("--pb-ext-p", type=float, default=0.02, help="PB_ext: P(Y < q_ext) <= p_ext")
+    ap.add_argument("--pb-cell", type=float, default=1.0, help="outcome cell width of the probability LP (thresholds are added as cell edges)")
     ap.add_argument("--tag", default="offcem_default"); ap.add_argument("--redo", action="store_true")
     run(ap.parse_args())
