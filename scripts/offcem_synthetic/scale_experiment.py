@@ -146,7 +146,7 @@ def run(args):
             print(f"[{method}] ridge alpha by out-of-fold MSE: {oof} -> {alpha}", flush=True)
         else:
             alpha = float(args.alpha)
-        P = B.prep(args.seed, user_folds=(args.folds == "user"), W=W, lab=lab, model=args.model, lam=lam, limits=limits, calibrate=calibrate, sigma_ref=sigma_ref, alpha=alpha, clip=args.clip_model, shrink=(None if args.h_shrink is None else ("cv" if args.h_shrink == "cv" else float(args.h_shrink))), g_model=args.g_model)
+        P = B.prep(args.seed, user_folds=(args.folds == "user"), W=W, lab=lab, model=args.model, lam=lam, limits=limits, calibrate=calibrate, sigma_ref=sigma_ref, alpha=alpha, clip=args.clip_model, shrink=(None if args.h_shrink is None else ("cv" if args.h_shrink == "cv" else float(args.h_shrink))), g_model=args.g_model, cells=args.cells)
         if P["W"].get("two_step_info"):
             r["two_step_info"] = P["W"]["two_step_info"]; print(f"[{method}] two-step correction weight s: {P['W']['two_step_info']}", flush=True)
         if P.get("clip_info"):
@@ -197,6 +197,11 @@ def run(args):
                 c0 = int(np.floor(emax)); grid = sorted({float(max(c0 - k, args.eps_min)) for k in (2, 1, 0)}); r["eps_grid_rule"] = "floor(eps_max)-2, -1, floor"
             else:
                 grid = [float(args.eps_min)]; r["eps_grid_rule"] = "eps_max not positive: eps_min only"
+        if args.eps_floor_fracs:                       # fractions of floor(eps_max) (synthetic multi-world runs: e.g. eps_max 10.48 -> 5, 7.5, 10)
+            if np.isfinite(emax) and np.floor(emax) >= 1:
+                fe = float(np.floor(emax)); grid = sorted({float(max(f * fe, args.eps_min)) for f in args.eps_floor_fracs}); r["eps_grid_rule"] = "floor(eps_max) x " + ", ".join(f"{f:g}" for f in args.eps_floor_fracs)
+            else:
+                grid = [float(args.eps_min)]; r["eps_grid_rule"] = f"floor(eps_max) < 1 (eps_max = {emax:.4g}): eps_min only"
         if args.eps_fracs:                             # fractions of the calibrated eps_max (bounded outcomes, e.g. 0.5 0.75 1); eps_max <= eps_min -> eps_min only, reported
             if np.isfinite(emax) and emax > args.eps_min:
                 grid = sorted({float(max(f * emax, args.eps_min)) for f in args.eps_fracs}); r["eps_grid_rule"] = "eps_max x " + ", ".join(f"{f:g}" for f in args.eps_fracs)
@@ -215,7 +220,7 @@ def run(args):
             r["sweep"] = sw; r["sweep_seconds"] = time.perf_counter() - ts; dump(d, out)
             print(f"[{method}] sweep {r['sweep_seconds']:.0f}s  DR at eps_max " + (f"[{sw['dr'][-1]['lo']:.2f}, {sw['dr'][-1]['hi']:.2f}]" if sw["dr"][-1]["ok"] else sw["dr"][-1]["status"]), flush=True)
         # ---- beliefs at eps_max and one level below
-        rhos = grid if (args.eps_grid or args.eps_around_max or args.eps_below_max or args.eps_fracs) else (grid[-2:] if len(grid) > 1 else grid)
+        rhos = grid if (args.eps_grid or args.eps_around_max or args.eps_below_max or args.eps_fracs or args.eps_floor_fracs) else (grid[-2:] if len(grid) > 1 else grid)
         qv = P["qu"][P["v_user"], P["v_act"]]
         mean, n = (P["ref_log"][0] + P["ref_log"][1]) / 2, P["ref_n"]
         with np.errstate(invalid="ignore", divide="ignore"):
@@ -361,6 +366,8 @@ if __name__ == "__main__":
     ap.add_argument("--pb-ext-q", type=float, default=0.01, help="PB_ext: 'extreme loss' threshold = this quantile of the logged rewards")
     ap.add_argument("--pb-ext-p", type=float, default=0.02, help="PB_ext: P(Y < q_ext) <= p_ext")
     ap.add_argument("--pb-fail-alpha", type=float, nargs="*", default=None, help="binary outcomes: failure-probability caps P(Y = LO) <= alpha, i.e. mu >= HI - alpha (HI - LO); items PB_fail<alpha> and B3c+PB_fail<alpha>")
+    ap.add_argument("--cells", default="round", choices=("round", "user"), help="level variables b: one per (round, cluster) (default, all earlier runs) or one per (user, cluster) with duplicate rows removed (LP size independent of n; check equivalence first)")
+    ap.add_argument("--eps-floor-fracs", type=float, nargs="*", default=None, help="eps grid = these fractions of floor(eps_max) (e.g. 0.5 0.75 1); beliefs at every level")
     ap.add_argument("--eps-fracs", type=float, nargs="*", default=None, help="eps grid = these fractions of the calibrated eps_max (e.g. 0.5 0.75 1); beliefs at every level")
     ap.add_argument("--pb-cell", type=float, default=1.0, help="outcome cell width of the probability LP (thresholds are added as cell edges)")
     ap.add_argument("--tag", default="offcem_default"); ap.add_argument("--redo", action="store_true")
