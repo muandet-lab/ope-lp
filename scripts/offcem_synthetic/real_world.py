@@ -44,7 +44,7 @@ def make_real_world(cfg: RealCfg, data_dir):
     else:                                                                           # true_q logger: redraw actions and rewards under softmax(beta * q), everything else unchanged
         from obp.utils import softmax, sample_action_fast
         pi0 = softmax(cfg.beta * q)
-        rng = np.random.RandomState(cfg.seed + 7)
+        rng = np.random.RandomState(cfg.seed + 8)                                    # reward stream: must differ from the action-draw seed below (seed + 7 for both made y a function of the action uniform)
         acts = sample_action_fast(pi0[bd["user_idx"]], random_state=cfg.seed + 7)
         bd = {**bd, "action": acts, "reward": rng.binomial(n=1, p=q[bd["user_idx"], acts]), "pscore": pi0[bd["user_idx"], acts]}
     rng = np.random.RandomState(cfg.seed + 11)

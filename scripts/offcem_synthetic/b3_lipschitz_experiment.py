@@ -46,16 +46,23 @@ LO, HI = -30.0, 30.0
 KNN = 3
 
 
-def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level", lam=None, limits=None, calibrate=None, sigma_ref=None, alpha=1.0, clip=None, shrink=None, g_model="mlp"):
+def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level", lam=None, limits=None, calibrate=None, sigma_ref=None, alpha=1.0, clip=None, shrink=None, g_model="mlp", M_fixed=None, cells="round"):
     """W = None: the small world of plots 03-10 (SPLIT_WORLD, original exclusions) with K-means labels. Otherwise a prebuilt world and an action-label vector (any clustering).
     lam: overlap threshold defining the LP region (None = pi0 == 0 only). limits: outcome range (default [-30, 30]). calibrate: eps_max calibration function (default eps_sweep_dgp.calibrate_user_cells).
-    sigma_ref: noise sd used for logged reference intervals (default: the calibration's sigma_noise)."""
+    sigma_ref: noise sd used for logged reference intervals (default: the calibration's sigma_noise).
+    M_fixed: a frozen reward model as a (units x K) array (convergence experiment): no fitting and no clipping here (clip when freezing).
+    cells: 'round' (default, all earlier runs) = one level variable b per (unit, cluster), i.e. per (round, cluster) when units are rounds;
+           'user' = one b per (user, cluster), as b_{x,c} is written in the paper. With per-round exclusions this is a TIGHTER LP (one b must fit all of the user's
+           unsupported actions in the cluster, not only those excluded in one round), not an equivalent one."""
     lo_, hi_ = (LO, HI) if limits is None else (float(limits[0]), float(limits[1]))
     if W is None:
         W = G.make_world(G.WorldCfg(**{**F.SPLIT_WORLD, "seed": seed, "exclusion": "round_random"}))
     km = KMeans(n_clusters=W["C"], n_init=10, random_state=0).fit_predict(np.asarray(W["action_x"], float)).astype(int) if lab is None else np.asarray(lab).astype(int)
     Wp = {**W, "cl": km, "C": int(km.max()) + 1}
-    M = G.get_model(Wp, model, "ridge", 5, alpha, 1, user_folds=user_folds, shrink=shrink, g_model=g_model)
+    if M_fixed is None:
+        M = G.get_model(Wp, model, "ridge", 5, alpha, 1, user_folds=user_folds, shrink=shrink, g_model=g_model)
+    else:                                               # frozen external model: used as given
+        M = np.asarray(M_fixed, float); clip = None
     if limits is not None:
         M = np.clip(M, lo_, hi_)                        # the centre is a prediction of a mean in the outcome range (e.g. a probability)
     clip_info = None
@@ -83,12 +90,24 @@ def prep(seed, user_folds=True, W=None, lab=None, model="cluster_level", lam=Non
     iu, ia, ic, coef = pu[keep], pa[keep], pc[keep], coef_all[keep]
     vkeys, vid = np.unique(inv[iu] * K + ia, return_inverse=True)
     nV = len(vkeys); P.update(nV=nV, v_user=vkeys // K, v_act=vkeys % K, vid=vid)
-    ckeys, cid = np.unique(iu * C + ic, return_inverse=True)
-    Kc = len(ckeys); cu, cc = ckeys // C, ckeys % C
-    P.update(Kc=Kc, mp=M[iu, ia], coef_v=np.bincount(vid, coef, nV), gh=st["G"][cu, cc], gh_se=st["S"][cu, cc], cell_rows=st["rows_per_cluster"][cc], n_pairs=len(iu), n_nonident=int((~keep).sum()))
-    rr = np.arange(len(iu))
-    P["A_base"] = coo_matrix((np.concatenate([np.ones(len(iu)), -np.ones(len(iu)), -np.ones(len(iu)), np.ones(len(iu))]),
-                              (np.concatenate([rr, rr, rr + len(iu), rr + len(iu)]), np.concatenate([vid, nV + cid, vid, nV + cid]))), shape=(2 * len(iu), nV + Kc)).tocsr()
+    if cells == "user":                                 # one b per (user, cluster); b_hat taken from one unit of that user (the level ridge depends on the user context only)
+        ckeys, cid = np.unique(inv[iu] * C + ic, return_inverse=True)
+        Kc = len(ckeys); cu, cc = first[ckeys // C], ckeys % C
+    else:
+        ckeys, cid = np.unique(iu * C + ic, return_inverse=True)
+        Kc = len(ckeys); cu, cc = ckeys // C, ckeys % C
+    P["cells"] = cells
+    coef_v = np.bincount(vid, coef, nV); mp = M[iu, ia]; rvid, rcid = vid, cid
+    if cells == "user":                                 # rows of the same (variable, cell) are duplicates when m_hat depends on the user only: keep one, so the LP size no longer grows with n
+        _, idx, inv_r = np.unique(vid * Kc + cid, return_index=True, return_inverse=True)
+        gap = float(np.abs(mp - mp[idx][inv_r]).max()) if len(mp) else 0.0
+        assert gap < 1e-9, f"cells='user' needs m_hat constant within a user (max gap {gap:.3g})"
+        rvid, rcid, mp = vid[idx], cid[idx], mp[idx]
+        P["vid"] = rvid                                 # per-row variable id (used by truth checks with coef_v[vid])
+    P.update(Kc=Kc, mp=mp, coef_v=coef_v, gh=st["G"][cu, cc], gh_se=st["S"][cu, cc], cell_rows=st["rows_per_cluster"][cc], n_pairs=len(rvid), n_nonident=int((~keep).sum()))
+    rr = np.arange(len(rvid)); npr = len(rvid)
+    P["A_base"] = coo_matrix((np.concatenate([np.ones(npr), -np.ones(npr), -np.ones(npr), np.ones(npr)]),
+                              (np.concatenate([rr, rr, rr + npr, rr + npr]), np.concatenate([rvid, nV + rcid, rvid, nV + rcid]))), shape=(2 * npr, nV + Kc)).tocsr()
     VID = np.full((nu, K), -1); VID[P["v_user"], P["v_act"]] = np.arange(nV); P["VID"] = VID
     # logged references: mean reward of (user, action) pairs with logged rounds
     act, y = W["act"], W["y"]

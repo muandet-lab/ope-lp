@@ -77,7 +77,7 @@ def truth_checks(P, rho, eta):
                 cells_spread_over_2rho=int(((hi - lo) > 2 * rho + 1e-9).sum()))
 
 
-def prob_belief_box(y_log, LO, HI, args):
+def prob_belief_box(y_log, LO, HI, args, thresholds=None):
     """Probability beliefs on P_{Y(t)|X=x} (finite LP of Sec. 3.2, constraints (7)-(9)), thresholds = quantiles of the logged rewards (logged data only):
          PB_sev : P(Y < q_sev) <= alpha * P(Y < q_poor)      'severe outcomes are rare among poor outcomes'
          PB_ext : P(Y < q_ext) <= p_ext                      'extreme losses are rare'
@@ -86,7 +86,7 @@ def prob_belief_box(y_log, LO, HI, args):
     full LP is solved with mu in [l, u]. Returns {name: (l, u, rows)} for 'PB_sev' and 'PB_sev+ext', plus the thresholds."""
     from scipy.optimize import linprog
     y_log = np.asarray(y_log, float)
-    th = dict(sev=float(np.quantile(y_log, args.pb_sev_q)), poor=float(np.quantile(y_log, args.pb_poor_q)), ext=float(np.quantile(y_log, args.pb_ext_q)))
+    th = dict(thresholds) if thresholds is not None else dict(sev=float(np.quantile(y_log, args.pb_sev_q)), poor=float(np.quantile(y_log, args.pb_poor_q)), ext=float(np.quantile(y_log, args.pb_ext_q)))   # thresholds: population values (convergence experiment)
     edges = np.unique(np.r_[np.arange(LO, HI + 1e-9, args.pb_cell), HI, [min(max(t, LO), HI) for t in th.values()]])
     lo_e, hi_e = edges[:-1], edges[1:]; H = len(lo_e)
     below = lambda t: (hi_e <= t + 1e-12).astype(float)              # cells inside (-inf, t): P(Y < t) = sum of their p^B
@@ -135,7 +135,7 @@ def run(args):
         if args.alpha == "cv":                           # ridge penalty by out-of-fold squared error of the cross-fitted centre on the logged rounds (logged data only)
             Wl = {**W, "cl": lab, "C": int(lab.max()) + 1}; oof = {}
             for a_ in (0.1, 1.0, 10.0, 100.0, 1000.0):
-                Ma = G.get_model(Wl, args.model, "ridge", 5, a_, 1, user_folds=(args.folds == "user"))
+                Ma = G.get_model(Wl, args.model, "ridge", 5, a_, 1, user_folds=(args.folds == "user"), g_model=args.g_model)
                 if limits is not None:
                     Ma = np.clip(Ma, limits[0], limits[1])
                 oof[a_] = float(((W["y"] - Ma[W["uid"], W["act"]]) ** 2).mean())
@@ -197,6 +197,11 @@ def run(args):
                 c0 = int(np.floor(emax)); grid = sorted({float(max(c0 - k, args.eps_min)) for k in (2, 1, 0)}); r["eps_grid_rule"] = "floor(eps_max)-2, -1, floor"
             else:
                 grid = [float(args.eps_min)]; r["eps_grid_rule"] = "eps_max not positive: eps_min only"
+        if args.eps_fracs:                             # fractions of the calibrated eps_max (bounded outcomes, e.g. 0.5 0.75 1); eps_max <= eps_min -> eps_min only, reported
+            if np.isfinite(emax) and emax > args.eps_min:
+                grid = sorted({float(max(f * emax, args.eps_min)) for f in args.eps_fracs}); r["eps_grid_rule"] = "eps_max x " + ", ".join(f"{f:g}" for f in args.eps_fracs)
+            else:
+                grid = [float(args.eps_min)]; r["eps_grid_rule"] = f"eps_max = {emax:.4g} <= eps_min: eps_min only (run a separate sensitivity sweep with --eps-grid)"
         r.update(calibration=P["cal"], eta_hat=P["eta"], level_se=dict(median=float(np.median(P["gh_se"])), p90=float(np.percentile(P["gh_se"], 90)), max=float(P["gh_se"].max())), rows_per_cluster=dict(min=int(P["st"]["rows_per_cluster"].min()), median=float(np.median(P["st"]["rows_per_cluster"]))), grid=grid, eps_max=emax, V=P["V"], V_plus_true=P["Vp_true"], V0_true=P["V0_true"], lp_mass=P["lp_mass"], supported=P["sup"],
                  n_merged_vars=int(P["nV"]), n_pairs=int(P["n_pairs"]), sigma_hat=P["sigma"], prep_seconds=time.perf_counter() - tc)
         print(f"[{method}] ARI {r['ari_vs_dgp']:.2f}  eps_max {emax:.2f}  grid {np.round(grid, 2).tolist()}  vars {P['nV']}  prep {r['prep_seconds']:.0f}s", flush=True)
@@ -210,7 +215,7 @@ def run(args):
             r["sweep"] = sw; r["sweep_seconds"] = time.perf_counter() - ts; dump(d, out)
             print(f"[{method}] sweep {r['sweep_seconds']:.0f}s  DR at eps_max " + (f"[{sw['dr'][-1]['lo']:.2f}, {sw['dr'][-1]['hi']:.2f}]" if sw["dr"][-1]["ok"] else sw["dr"][-1]["status"]), flush=True)
         # ---- beliefs at eps_max and one level below
-        rhos = grid if (args.eps_grid or args.eps_around_max or args.eps_below_max) else (grid[-2:] if len(grid) > 1 else grid)
+        rhos = grid if (args.eps_grid or args.eps_around_max or args.eps_below_max or args.eps_fracs) else (grid[-2:] if len(grid) > 1 else grid)
         qv = P["qu"][P["v_user"], P["v_act"]]
         mean, n = (P["ref_log"][0] + P["ref_log"][1]) / 2, P["ref_n"]
         with np.errstate(invalid="ignore", divide="ignore"):
@@ -247,6 +252,17 @@ def run(args):
                                       true_false_mass=(None if args.real else prob_belief_false_mass(np.asarray(qv, float), w, float(cfg["sigma"]), pb["thresholds"], args)))
         print(f"[{method}] probability beliefs: {r['prob_beliefs_info']}", flush=True)
         pbox = {k: ((np.full(P["nV"], pb[k][0]), np.full(P["nV"], pb[k][1])) if pb[k][0] is not None else (np.full(P["nV"], HI), np.full(P["nV"], LO))) for k in ("PB_sev", "PB_sev+ext")}  # empty belief set -> infeasible box
+        fail = {}
+        for a_ in (args.pb_fail_alpha or []):          # binary outcomes Y in {LO, HI}: mu = HI - (HI - LO) P(Y = LO), so the cap is exactly a lower bound on the mean
+            fail[f"PB_fail{a_:g}"] = (np.full(P["nV"], HI - a_ * (HI - LO)), np.full(P["nV"], HI))
+        if fail:
+            qn = (np.asarray(qv, float) - LO) / (HI - LO)
+            r["prob_beliefs_info"]["fail_cap"] = {k: dict(alpha=a_, mean_lower_bound=float(HI - a_ * (HI - LO)), true_false_mass=float((w * (1 - qn > a_ + 1e-12)).sum() / w.sum()))
+                                                  for k, a_ in zip(fail, args.pb_fail_alpha)}
+            print(f"[{method}] failure caps: {r['prob_beliefs_info']['fail_cap']}", flush=True)
+        _, nva = np.unique(P["v_act"], return_counts=True)
+        r["b3c_possible_pairs"] = dict(user_pairs_same_unsupported_action=int((nva * (nva - 1) // 2).sum()), actions_with_2plus_vars=int((nva >= 2).sum()), vars=int(P["nV"]))
+        print(f"[{method}] B3c coupling: {r['b3c_possible_pairs']}", flush=True)
         r["beliefs_info"] = dict(L=L_use, L_source=("logged-data 95th pct of noise-corrected same-action slopes" if args.L == "auto" else "given"), z=args.z, ref_z=args.ref_z, b3_refs_per_var_median=float(np.median(av3)), b3_share_vars_with_ref=float((av3 >= 1).mean()),
                                  b3_true_outside_mass=float((w * ((qv < lb3 - 1e-9) | (qv > ub3 + 1e-9))).sum() / w.sum()),
                                  b3z_true_outside_mass=float((w * ((qv < lb3z - 1e-9) | (qv > ub3z + 1e-9))).sum() / w.sum()),
@@ -271,7 +287,9 @@ def run(args):
                      ("B3c+B7_ord", np.full(P["nV"], LO), np.full(P["nV"], HI), True, domo),   # same without cluster-specific bounds (B5)
                      # probability beliefs on P_{Y(t)|X} (prob_belief_box), alone and on top of Lipschitz coupling
                      ("PB_sev", *pbox["PB_sev"], False, None), ("PB_sev+ext", *pbox["PB_sev+ext"], False, None),
-                     ("B3c+PB_sev", *pbox["PB_sev"], True, None), ("B3c+PB_sev+ext", *pbox["PB_sev+ext"], True, None),
+                     ("B3c+PB_sev", *pbox["PB_sev"], True, None), ("B3c+PB_sev+ext", *pbox["PB_sev+ext"], True, None)]
+            items += [it for k, (flb, fub) in fail.items() for it in ((k, flb, fub, False, None), (f"B3c+{k}", flb, fub, True, None))]
+            items += [
                      (f"B3z+B5_q5+B7_z{args.z:g}", np.maximum(np.maximum(lb3z, lb5q), lb7z), np.minimum(np.minimum(ub3z, ub5q), ub7z), True, domz)]
             for name, lb, ub, coup, dm in items:
                 if args.beliefs and name not in args.beliefs and name != "baseline":
@@ -342,6 +360,8 @@ if __name__ == "__main__":
     ap.add_argument("--pb-alpha", type=float, default=0.2, help="PB_sev: P(Y < q_sev) <= alpha P(Y < q_poor)")
     ap.add_argument("--pb-ext-q", type=float, default=0.01, help="PB_ext: 'extreme loss' threshold = this quantile of the logged rewards")
     ap.add_argument("--pb-ext-p", type=float, default=0.02, help="PB_ext: P(Y < q_ext) <= p_ext")
+    ap.add_argument("--pb-fail-alpha", type=float, nargs="*", default=None, help="binary outcomes: failure-probability caps P(Y = LO) <= alpha, i.e. mu >= HI - alpha (HI - LO); items PB_fail<alpha> and B3c+PB_fail<alpha>")
+    ap.add_argument("--eps-fracs", type=float, nargs="*", default=None, help="eps grid = these fractions of the calibrated eps_max (e.g. 0.5 0.75 1); beliefs at every level")
     ap.add_argument("--pb-cell", type=float, default=1.0, help="outcome cell width of the probability LP (thresholds are added as cell edges)")
     ap.add_argument("--tag", default="offcem_default"); ap.add_argument("--redo", action="store_true")
     run(ap.parse_args())
